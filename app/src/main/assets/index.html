@@ -878,6 +878,7 @@ const S = {
   quota:   null,   // rate-limit remaining, from response headers
   view:    'auth', // which screen is showing — the back button needs to know
   runId:   null,   // the Actions run being watched
+  asked:   new Set(), // runs we have already offered the artifact for
   rel:     null,   // the release being viewed
   attachTo:null,   // the release a picked file is destined for
   poll:    null,   // its polling timer
@@ -2273,13 +2274,25 @@ async function tickRun(){
     if (!running) {
       try {
         const { artifacts } = await api.artifacts(o, r, id);
-        artifacts.filter(a => !a.expired).forEach((a, i) => {
+        const live = artifacts.filter(a => !a.expired);
+
+        live.forEach((a, i) => {
           const el = $('art-' + i);
           if (!el) return;
           el.onclick = () => (window.Native && window.Native.download)
             ? downloadArtifact(a)
             : (window.open(run.html_url, '_blank'));
         });
+
+        // The build just went green while you were watching it. Do not make
+        // someone who sat through a five-minute build then go hunting for the
+        // file — offer it. Once per run: the poll would otherwise re-ask every
+        // four seconds.
+        if (run.conclusion === 'success' && live.length
+            && !S.asked.has(id) && window.Native && window.Native.download) {
+          S.asked.add(id);
+          setTimeout(() => finishSheet(run, live[0]), 400);
+        }
       } catch { /* the list already rendered; nothing to wire */ }
     }
 
@@ -2635,6 +2648,48 @@ function editReleaseSheet(r){
   });
 }
 
+/* ── The build finished ───────────────────────────────────────────────────
+   Install it, or keep it. Those are different things: the download lives in a
+   cache that the next download wipes, so "install" and "save" are not the same
+   choice wearing two hats.
+   ──────────────────────────────────────────────────────────────────────── */
+function finishSheet(run, artifact){
+  const apk = /\.apk$/i.test(artifact.name) || /apk/i.test(artifact.name);
+
+  sheet('Build succeeded', `
+    <div class="overwrite">
+      <b>${esc(run.name)} #${run.run_number}</b><br>
+      ${esc(artifact.name)} · ${bytes(artifact.size_in_bytes)}<br>
+      built in ${secs(run.run_started_at, run.updated_at)}
+    </div>
+
+    <p class="hint" style="margin:0 0 16px">What would you like to do with it?</p>
+
+    ${apk ? `<button class="btn solid wide" id="fin-install">Install the APK</button>
+             <div style="height:10px"></div>` : ''}
+    <button class="btn wide" id="fin-save">Save to Downloads</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" id="fin-no">Not now</button>
+  `, () => {
+    const go = after => {
+      closeSheet();
+      downloadNative({
+        url:    artifact.archive_download_url,
+        accept: 'application/vnd.github+json',
+        name:   artifact.name,
+        unzip:  true,                  // every GitHub artifact is a zip
+        size:   artifact.size_in_bytes,
+        label:  artifact.name,
+        after                          // 'install' | 'save' — skip the second ask
+      });
+    };
+
+    if ($('fin-install')) $('fin-install').onclick = () => go('install');
+    $('fin-save').onclick = () => go('save');
+    $('fin-no').onclick   = closeSheet;
+  });
+}
+
 /* ── Downloading an artifact ──────────────────────────────────────────────
    GitHub always wraps an artifact in a ZIP, even a single APK. Java pulls the
    APK out and hands it to Android's package installer, which is the last step
@@ -2648,6 +2703,11 @@ const downloadArtifact = a => downloadNative({
   size:   a.size_in_bytes,
   label:  a.name
 });
+
+/* The cache is wiped on the next download, so installing and keeping a copy are
+   genuinely different things — which is why the app asks rather than guessing. */
+const installHint = () =>
+  toast('Android will ask you to allow gitfile to install apps.', 6000);
 
 function downloadNative(a){
   sheet('Download', `
@@ -2675,22 +2735,35 @@ function downloadNative(a){
     $('dbar').style.width = '100%';
     $('dpct').textContent = '100%';
 
+    $('dclose').textContent = 'Close';
+
     if (kind === 'apk') {
       $('dnow').textContent = name;
-      $('dact').innerHTML = `<button class="btn solid wide" id="dinstall">Install ${esc(name)}</button><div style="height:10px"></div>`;
-      $('dinstall').onclick = () => window.Native.install(path);
-      $('dclose').textContent = 'Close';
 
-      // Android will refuse this the first time until gitfile is allowed to
-      // install apps. Say so before they hit a wall they don't understand.
-      $('dnow').insertAdjacentHTML('afterend', '');
-      toast('Android will ask you to allow gitfile to install apps.', 6000);
+      // Told what to do already? Do it, and don't make them tap twice.
+      if (a.after === 'install') { window.Native.install(path); installHint(); return; }
+      if (a.after === 'save')    { window.Native.saveFile(path); return; }
+
+      $('dact').innerHTML = `
+        <button class="btn solid wide" id="dinstall">Install</button>
+        <div style="height:10px"></div>
+        <button class="btn wide" id="dsave">Save to Downloads</button>
+        <div style="height:10px"></div>`;
+
+      $('dinstall').onclick = () => { window.Native.install(path); installHint(); };
+      $('dsave').onclick    = () => { window.Native.saveFile(path); $('dnow').textContent = 'Saving…'; };
 
     } else {
       $('dnow').textContent = 'Saved to Downloads';
       $('dact').innerHTML = `<div class="overwrite">${esc(name)}<br>in your Downloads folder</div>`;
-      $('dclose').textContent = 'Close';
     }
+  };
+
+  window.onFileSaved = (name, err) => {
+    if (!$('dnow')) { toast(err || ('Saved ' + name)); return; }
+    if (err) { $('dnow').textContent = err; return; }
+    $('dnow').textContent = 'Saved to Downloads';
+    $('dact').innerHTML = `<div class="overwrite">${esc(name)}<br>in your Downloads folder</div>`;
   };
 
   window.onDownloadError = msg => {
