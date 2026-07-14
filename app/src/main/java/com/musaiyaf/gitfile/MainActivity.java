@@ -261,6 +261,27 @@ public class MainActivity extends Activity {
             });
         }
 
+        /**
+         * The version actually installed, read from the APK itself.
+         *
+         * Not a constant in the JavaScript: that would be a number someone has to
+         * remember to bump, and therefore a number that is eventually a lie. The
+         * build number comes from the Actions run that produced this APK.
+         */
+        @JavascriptInterface
+        public String appVersion() {
+            try {
+                android.content.pm.PackageInfo p =
+                        getPackageManager().getPackageInfo(getPackageName(), 0);
+                long code = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                        ? p.getLongVersionCode()
+                        : p.versionCode;
+                return p.versionName + " (build " + code + ")";
+            } catch (Exception e) {
+                return "unknown";
+            }
+        }
+
         @JavascriptInterface
         public void copy(String text) {
             ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
