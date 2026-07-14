@@ -365,7 +365,7 @@ public class MainActivity extends Activity {
          *      installer a file:// path throws on anything since Android 7.
          */
         @JavascriptInterface
-        public void download(String url, String token) {
+        public void download(String url, String token, String accept, String name, boolean unzip) {
             new Thread(() -> {
                 try {
                     File dir = new File(getCacheDir(), "dl");
@@ -374,7 +374,10 @@ public class MainActivity extends Activity {
 
                     HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
                     c.setRequestProperty("Authorization", "Bearer " + token);
-                    c.setRequestProperty("Accept", "application/vnd.github+json");
+                    // Artifacts come back as JSON-negotiated zips; a release asset needs
+                    // octet-stream, or GitHub hands you the asset's metadata instead of
+                    // the asset.
+                    c.setRequestProperty("Accept", accept);
                     c.setInstanceFollowRedirects(true);
                     c.setConnectTimeout(20000);
                     c.setReadTimeout(60000);
@@ -386,10 +389,10 @@ public class MainActivity extends Activity {
                     }
 
                     long total = c.getContentLengthLong();
-                    File zip = new File(dir, "artifact.zip");
+                    File got = new File(dir, unzip ? "artifact.zip" : safe(name));
 
                     try (InputStream in = c.getInputStream();
-                         FileOutputStream out = new FileOutputStream(zip)) {
+                         FileOutputStream out = new FileOutputStream(got)) {
                         byte[] buf = new byte[32768];
                         long got = 0;
                         int lastPct = -1;
@@ -408,7 +411,19 @@ public class MainActivity extends Activity {
                         }
                     }
 
+                    // A release asset is already the file. Nothing to unpack.
+                    if (!unzip) {
+                        if (got.getName().toLowerCase().endsWith(".apk")) {
+                            js("onDownloadDone", "apk", got.getAbsolutePath(), got.getName());
+                        } else {
+                            String saved = saveToDownloads(got, got.getName());
+                            js("onDownloadDone", "file", "", saved);
+                        }
+                        return;
+                    }
+
                     // Unpack. An APK inside is the thing we are really after.
+                    File zip = got;
                     File apk = null;
                     try (ZipInputStream zis = new ZipInputStream(new java.io.FileInputStream(zip))) {
                         for (ZipEntry e; (e = zis.getNextEntry()) != null; ) {
@@ -433,6 +448,58 @@ public class MainActivity extends Activity {
 
                 } catch (Exception e) {
                     js("onDownloadError", "Download failed: " + e.getMessage());
+                }
+            }).start();
+        }
+
+        /**
+         * Attach a file to a release.
+         *
+         * Assets do not go to api.github.com — they go to uploads.github.com, whose
+         * CORS behaviour is not something to bet on after everything else on this
+         * host has refused a WebView. Native, then, like the rest.
+         */
+        @JavascriptInterface
+        public void uploadAsset(String uploadUrl, String token, String name,
+                                String contentType, String base64) {
+            new Thread(() -> {
+                try {
+                    // The template arrives as ".../assets{?name,label}". Strip the
+                    // placeholder and put the real name on.
+                    String base = uploadUrl.replaceAll("\\{.*\\}$", "");
+                    String url  = base + "?name=" + Uri.encode(name);
+
+                    byte[] body = Base64.decode(base64, Base64.DEFAULT);
+
+                    HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+                    c.setRequestMethod("POST");
+                    c.setRequestProperty("Authorization", "Bearer " + token);
+                    c.setRequestProperty("Accept", "application/vnd.github+json");
+                    c.setRequestProperty("Content-Type", contentType);
+                    c.setFixedLengthStreamingMode(body.length);
+                    c.setDoOutput(true);
+                    c.setConnectTimeout(20000);
+                    c.setReadTimeout(120000);
+
+                    try (OutputStream out = c.getOutputStream()) { out.write(body); }
+
+                    int code = c.getResponseCode();
+                    if (code >= 400) {
+                        InputStream err = c.getErrorStream();
+                        StringBuilder sb = new StringBuilder();
+                        if (err != null) {
+                            try (BufferedReader r = new BufferedReader(
+                                     new InputStreamReader(err, StandardCharsets.UTF_8))) {
+                                for (String l; (l = r.readLine()) != null; ) sb.append(l);
+                            }
+                        }
+                        js("onAssetUploaded", "", "Upload failed (" + code + "). " + sb);
+                        return;
+                    }
+                    js("onAssetUploaded", name, "");
+
+                } catch (Exception e) {
+                    js("onAssetUploaded", "", "Upload failed: " + e.getMessage());
                 }
             }).start();
         }
@@ -467,6 +534,12 @@ public class MainActivity extends Activity {
     }
 
     private Native bridge;
+
+    /** Never let a remote name decide where on disk we write. */
+    private static String safe(String name) {
+        if (name == null || name.isEmpty()) return "download.bin";
+        return new File(name).getName().replaceAll("[^A-Za-z0-9._-]", "_");
+    }
 
     private static void deleteTree(File f) {
         if (f == null || !f.exists()) return;
