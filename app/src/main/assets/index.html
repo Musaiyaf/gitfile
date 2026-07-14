@@ -246,6 +246,83 @@ input.masked.plain{ -webkit-text-security:none; text-security:none; letter-spaci
   direction:rtl; text-align:left;      /* keep the filename end visible */
 }
 
+/* ── The editable path bar ────────────────────────────────── */
+.pathbar{
+  display:flex; align-items:center; gap:0;
+  border-bottom:1px solid var(--rule);
+  padding:0 14px;
+}
+.pathbar .dim{ color:var(--dim); font-size:12px; flex:none; }
+.pathbar input{
+  flex:1; min-width:0;
+  background:transparent; border:0; padding:12px 0;
+  color:var(--pure); font-size:12px;
+}
+.pathbar input:focus{ outline:none; }
+.pathbar input.moved{ text-decoration:underline; text-decoration-color:var(--pure); text-underline-offset:4px; }
+
+/* ── Diff ─────────────────────────────────────────────────────
+   No red and green — the app has no colour. Added lines are white on a lit
+   rule, removed lines are dimmed and struck through the gutter mark.
+   ──────────────────────────────────────────────────────────── */
+.diff{
+  border:1px solid var(--rule);
+  max-height:44vh; overflow:auto;
+  font-size:11.5px; line-height:1.6;
+  margin-bottom:20px;
+  white-space:pre;
+}
+.diff div{ padding:1px 10px 1px 24px; position:relative; }
+.diff .add{ color:var(--pure); background:var(--raised); }
+.diff .del{ color:var(--dim); }
+.diff .add::before,
+.diff .del::before,
+.diff .ctx::before{
+  position:absolute; left:8px; color:var(--dim);
+}
+.diff .add::before{ content:'+'; color:var(--pure); }
+.diff .del::before{ content:'\2212'; }   /* − */
+.diff .ctx{ color:var(--dim); opacity:.55; }
+.diff .gap{
+  color:var(--rule-lit); text-align:center; padding:4px 0;
+  border-top:1px solid var(--rule); border-bottom:1px solid var(--rule);
+}
+.diffstat{ font-size:11px; color:var(--dim); margin-bottom:10px; }
+
+/* ── Rendered markdown ────────────────────────────────────── */
+.md{ padding:20px 14px; font-family:system-ui, -apple-system, sans-serif; line-height:1.65; }
+.md h1,.md h2,.md h3{ font-weight:600; color:var(--pure); margin:22px 0 10px; line-height:1.3; }
+.md h1{ font-size:22px; border-bottom:1px solid var(--rule); padding-bottom:8px; }
+.md h2{ font-size:18px; border-bottom:1px solid var(--rule); padding-bottom:6px; }
+.md h3{ font-size:15px; }
+.md p{ margin:0 0 14px; }
+.md ul,.md ol{ margin:0 0 14px; padding-left:22px; }
+.md li{ margin-bottom:5px; }
+.md code{ font-family:var(--mono); font-size:12px; background:var(--raised); padding:2px 5px; }
+.md pre{ background:var(--panel); border:1px solid var(--rule); padding:12px; overflow-x:auto; margin:0 0 14px; }
+.md pre code{ background:none; padding:0; }
+.md blockquote{ border-left:2px solid var(--rule-lit); padding-left:12px; color:var(--dim); margin:0 0 14px; }
+.md a{ color:var(--pure); }
+.md hr{ border:0; border-top:1px solid var(--rule); margin:20px 0; }
+.md img{ max-width:100%; }
+.md table{ border-collapse:collapse; margin-bottom:14px; font-size:12px; }
+.md th,.md td{ border:1px solid var(--rule); padding:6px 10px; text-align:left; }
+
+/* ── Image preview ────────────────────────────────────────── */
+#imgview{ padding:24px 14px; text-align:center; }
+#imgview img{
+  max-width:100%;
+  /* a chequerboard, in greys, so transparency is visible */
+  background:
+    repeating-conic-gradient(var(--raised) 0% 25%, var(--panel) 0% 50%) 50% / 16px 16px;
+}
+#imgview .meta{ margin-top:14px; font-size:11px; color:var(--dim); }
+
+/* ── Status glyphs for Actions runs ───────────────────────── */
+.run-ok::before   { content:'\25CF'; color:var(--pure); }   /* ● */
+.run-bad::before  { content:'\2715'; color:var(--pure); }   /* ✕ */
+.run-wait::before { content:'\25CB'; color:var(--dim);  }   /* ○ */
+
 .tokmeta button{
   background:none; border:0; color:var(--text); font:inherit; padding:4px;
   text-decoration:underline; text-underline-offset:3px; text-decoration-color:var(--rule-lit);
@@ -434,13 +511,40 @@ input.masked.plain{ -webkit-text-security:none; text-security:none; letter-spaci
 
     <!-- ── 4. File editor ─────────────────────────────────── -->
     <section class="view" id="v-file">
+
+      <!-- The path is editable. Change it and commit, and the file moves; type a
+           slash and the folders are created on the way. Same as GitHub's own
+           filename box, which is the only place it lets you rename anything. -->
+      <div class="pathbar">
+        <span class="dim" id="pathroot"></span>
+        <input type="text" id="pathin" spellcheck="false" autocapitalize="off"
+               autocomplete="off" autocorrect="off">
+      </div>
+
       <div id="editstat">
         <span id="stat-lines">0 lines</span>
         <span id="stat-bytes">0 B</span>
         <span id="stat-state">clean</span>
       </div>
+
       <textarea id="editor" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"></textarea>
+      <div id="preview" class="md" style="display:none"></div>
+      <div id="imgview" style="display:none"></div>
     </section>
+
+    <section class="view" id="v-search">
+      <div class="pad" style="padding-bottom:8px">
+        <input type="text" id="q" placeholder="Search this repository…" spellcheck="false"
+               autocapitalize="off" autocorrect="off">
+      </div>
+      <div id="results"></div>
+    </section>
+
+    <section class="view" id="v-log"></section>
+
+    <section class="view" id="v-actions"></section>
+
+    <section class="view" id="v-prs"></section>
 
   </main>
 
@@ -675,7 +779,25 @@ const api = {
   createRepo: (body)       => gh('/user/repos', { method:'POST', body }),
   patchRepo:  (o, r, body) => gh(`/repos/${o}/${r}`, { method:'PATCH', body }),
 
-  makePR:    (o, r, body)  => gh(`/repos/${o}/${r}/pulls`, { method:'POST', body })
+  makePR:    (o, r, body)  => gh(`/repos/${o}/${r}/pulls`, { method:'POST', body }),
+  prs:       (o, r)        => gh(`/repos/${o}/${r}/pulls?state=open&per_page=50`),
+  mergePR:   (o, r, n, body) => gh(`/repos/${o}/${r}/pulls/${n}/merge`, { method:'PUT', body }),
+
+  /* History. `path` is optional — omit it for the whole branch. */
+  commits:   (o, r, ref, path) =>
+               gh(`/repos/${o}/${r}/commits?sha=${enc(ref)}&per_page=40`
+                  + (path ? `&path=${encodeURIComponent(path)}` : '')),
+
+  /* Code search. GitHub indexes lazily, so a brand-new repo may return nothing
+     for a while — that is the index catching up, not a bug here. */
+  search:    (o, r, q)     =>
+               gh(`/search/code?q=${encodeURIComponent(q + ` repo:${o}/${r}`)}&per_page=40`),
+
+  /* Actions. The runs list is how the app watches itself being built. */
+  runs:      (o, r)        => gh(`/repos/${o}/${r}/actions/runs?per_page=20`),
+
+  delRef:    (o, r, branch) =>
+               gh(`/repos/${o}/${r}/git/refs/heads/${enc(branch)}`, { method:'DELETE' })
 };
 
 
@@ -1047,34 +1169,70 @@ const bytes = n =>
 
 
 /* --- 6d. File editor ---------------------------------------- */
+const IMAGE = /\.(png|jpe?g|gif|webp|bmp|ico|avif)$/i;
+const MIME  = { png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif',
+                webp:'image/webp', bmp:'image/bmp', ico:'image/x-icon', avif:'image/avif' };
+
+/* Which pane of the file view is showing. */
+function filePane(which){
+  $('editor').style.display  = which === 'edit'    ? 'block' : 'none';
+  $('preview').style.display = which === 'preview' ? 'block' : 'none';
+  $('imgview').style.display = which === 'image'   ? 'block' : 'none';
+  $('editstat').style.display = which === 'image'  ? 'none'  : 'flex';
+}
+
 async function openFile(path){
   show('file');
   const ed = $('editor');
+  filePane('edit');
   ed.value = 'Loading…';
   ed.readOnly = true;
 
   try {
     const f = await api.contents(S.repo.owner, S.repo.name, path, S.branch);
 
-    // The Contents API refuses to return content above 1 MB.
     if (f.content === undefined || f.content === '') {
-      throw new Error('File is over 1 MB. The contents API will not return it — that needs the blobs API.');
+      throw new Error('File is over 1 MB. The contents API will not return it.');
     }
+
+    // ── Images: show them, don't refuse them. ──────────────────────────────
+    if (IMAGE.test(f.path)) {
+      const ext = f.path.split('.').pop().toLowerCase();
+      S.file   = { path: f.path, sha: f.sha, text: null, binary: true };
+      S.buffer = null;
+
+      $('imgview').innerHTML = `
+        <img src="data:${MIME[ext] || 'image/*'};base64,${f.content.replace(/\s/g, '')}" alt="">
+        <div class="meta">${bytes(f.size || 0)} · ${f.sha.slice(0, 7)}</div>`;
+      filePane('image');
+      paintPath();
+      paintRef();
+
+      setBar([
+        { label:'Back', onClick:() => backToTree() },
+        { label:'File', onClick:fileSheet, solid:true, grow:true }
+      ]);
+      return;
+    }
+
     if (looksBinary(f.content)) {
-      throw new Error('Binary file. gitfile edits text only.');
+      throw new Error('Binary file. gitfile can show images, and edit text.');
     }
 
     const text = b64decode(f.content);
-    S.file   = { path: f.path, sha: f.sha, text };
+    S.file   = { path: f.path, sha: f.sha, text, binary: false };
     S.buffer = text;
 
     ed.value = text;
     ed.readOnly = false;
+    filePane('edit');
+    paintPath();
     paintStats();
     paintRef();
 
     setBar([
       { label:'Back',   onClick:() => backToTree() },
+      { label:'File',   onClick:fileSheet },
       { label:'Commit', onClick:commitSheet, solid:true, grow:true, id:'commitbtn' }
     ]);
     refreshCommitBtn();
@@ -1083,12 +1241,63 @@ async function openFile(path){
     S.file = null;
     ed.value = '';
     ed.readOnly = true;
+    filePane('edit');
     $('stat-lines').textContent = '—';
     $('stat-bytes').textContent = '—';
     $('stat-state').textContent = 'unreadable';
     toast(e.message, 6000);
     setBar([{ label:'Back', onClick:() => backToTree(), solid:true }]);
   }
+}
+
+/* ── The editable path ────────────────────────────────────────────────────
+   The input holds the full path. Editing it and committing moves the file —
+   and because a git tree has no directories of its own, typing a slash simply
+   creates the folders. GitHub's own UI works exactly this way.
+   ──────────────────────────────────────────────────────────────────────── */
+function paintPath(){
+  $('pathroot').textContent = S.repo.name + ' / ';
+  $('pathin').value = S.file ? S.file.path : '';
+  markMoved();
+}
+
+function markMoved(){
+  const moved = !!S.file && $('pathin').value.trim() !== S.file.path;
+  $('pathin').classList.toggle('moved', moved);
+  refreshCommitBtn();
+}
+
+$('pathin').addEventListener('input', markMoved);
+
+/* A move is a change worth committing even when the bytes are identical. */
+const isMoved = () =>
+  !!S.file && $('pathin').value.trim() !== '' && $('pathin').value.trim() !== S.file.path;
+
+/* ── The File sheet: preview, history, delete ───────────────────────────── */
+function fileSheet(){
+  const md = /\.(md|markdown)$/i.test(S.file.path);
+  const showingPreview = $('preview').style.display === 'block';
+
+  sheet('File', `
+    <div class="overwrite">
+      <b>${S.file.path}</b><br>
+      blob ${S.file.sha.slice(0, 7)} on <b>${S.branch}</b>
+    </div>
+    <div class="sheetlist">
+      ${md ? `<button id="f-prev">${showingPreview ? 'Show source' : 'Preview markdown'}<small>Render it the way GitHub would</small></button>` : ''}
+      <button id="f-log">History<small>Every commit that touched this file</small></button>
+      <button id="f-del">Delete<small>Removes the file in a single commit</small></button>
+    </div>
+    <button class="btn wide" onclick="closeSheet()">Close</button>
+  `, () => {
+    if ($('f-prev')) $('f-prev').onclick = () => {
+      closeSheet();
+      if (showingPreview) { filePane('edit'); }
+      else { $('preview').innerHTML = markdown(S.buffer); filePane('preview'); }
+    };
+    $('f-log').onclick = () => { closeSheet(); openLog(S.file.path); };
+    $('f-del').onclick = () => { closeSheet(); doDelete({ path:S.file.path, name:S.file.path.split('/').pop() }); };
+  });
 }
 
 function backToTree(){
@@ -1123,7 +1332,7 @@ function paintStats(){
 
 function refreshCommitBtn(){
   const b = $('commitbtn');
-  if (b) b.disabled = !isDirty();
+  if (b) b.disabled = !(isDirty() || isMoved());
 }
 
 
@@ -1135,16 +1344,27 @@ function refreshCommitBtn(){
    moved underneath you, GitHub returns 409 rather than clobbering.
    ------------------------------------------------------------ */
 function commitSheet(){
-  if (!isDirty()) return;
+  if (!isDirty() && !isMoved()) return;
+
+  const newPath = $('pathin').value.trim();
+  const moved   = isMoved();
+  const d       = isDirty() ? diffLines(S.file.text, S.buffer) : null;
 
   sheet('Commit', `
     <div class="overwrite">
-      Replacing blob <b>${S.file.sha.slice(0, 7)}</b><br>
-      on <b>${S.branch}</b> at <b>${S.file.path}</b>
+      ${moved
+        ? `Moving <b>${S.file.path}</b><br>to <b>${newPath}</b>`
+        : `Replacing blob <b>${S.file.sha.slice(0, 7)}</b><br>at <b>${S.file.path}</b>`}
+      <br>on <b>${S.branch}</b>
     </div>
+
+    ${d ? `<div class="diffstat">${d.added} added · ${d.removed} removed</div>
+           <div class="diff">${d.html}</div>`
+        : '<div class="diffstat">Contents unchanged — only the path moves.</div>'}
+
     <div class="field">
       <label for="cmsg">Message</label>
-      <input type="text" id="cmsg" placeholder="Update ${S.file.path.split('/').pop()}">
+      <input type="text" id="cmsg" placeholder="${moved ? 'Move ' + S.file.path.split('/').pop() : 'Update ' + S.file.path.split('/').pop()}">
     </div>
     <button class="btn solid wide" id="cgo">Commit to ${S.branch}</button>
     <div style="height:10px"></div>
@@ -1156,32 +1376,103 @@ function commitSheet(){
 }
 
 async function doCommit(){
-  const btn = $('cgo');
-  const msg = $('cmsg').value.trim() || ('Update ' + S.file.path.split('/').pop());
+  const btn     = $('cgo');
+  const newPath = $('pathin').value.trim();
+  const moved   = isMoved();
+  const name    = S.file.path.split('/').pop();
+  const msg     = $('cmsg').value.trim() ||
+                  (moved ? 'Move ' + name + ' to ' + newPath : 'Update ' + name);
 
   busy(btn, true, 'Committing…');
   try {
-    const res = await api.putFile(S.repo.owner, S.repo.name, S.file.path, {
-      message: msg,
-      content: b64encode(S.buffer),
-      sha:     S.file.sha,        // ← the lock
-      branch:  S.branch
-    });
+    if (moved) {
+      // A move is one commit that writes the new path and drops the old one. The
+      // contents API can't express that — it only ever touches a single file — so
+      // this goes through the tree plumbing, same as an upload.
+      const c = await commitFiles([
+        { path: newPath,     b64: b64encode(S.buffer) },
+        { path: S.file.path, delete: true }
+      ], msg);
 
-    // The response hands back the NEW blob sha. Adopt it, so the next
-    // commit in this session locks against the right version.
-    S.file.sha  = res.content.sha;
-    S.file.text = S.buffer;
+      // Re-read the file at its new home so we hold the right blob sha.
+      const f = await api.contents(S.repo.owner, S.repo.name, newPath, S.branch);
+      S.file = { path: f.path, sha: f.sha, text: S.buffer, binary: false };
 
-    closeSheet();
-    paintStats(); paintRef(); refreshCommitBtn();
-    toast('Committed · ' + res.commit.sha.slice(0, 7));
+      closeSheet();
+      paintPath(); paintStats(); paintRef(); refreshCommitBtn();
+      toast('Moved · ' + c.sha.slice(0, 7));
+
+    } else {
+      const res = await api.putFile(S.repo.owner, S.repo.name, S.file.path, {
+        message: msg,
+        content: b64encode(S.buffer),
+        sha:     S.file.sha,        // ← the lock
+        branch:  S.branch
+      });
+
+      S.file.sha  = res.content.sha;
+      S.file.text = S.buffer;
+
+      closeSheet();
+      paintStats(); paintRef(); refreshCommitBtn();
+      toast('Committed · ' + res.commit.sha.slice(0, 7));
+    }
   } catch (e) {
     toast(e.message, 6000);
   } finally {
     busy(btn, false);
   }
 }
+
+/* ── A line diff ──────────────────────────────────────────────────────────
+   Longest common subsequence, then walk the table back. Fine for the sizes a
+   phone editor deals with; a 3000-line file would make the table 9,000,000
+   cells, so past that we don't pretend.
+   ──────────────────────────────────────────────────────────────────────── */
+function diffLines(before, after){
+  const A = before.split('\n'), B = after.split('\n');
+
+  if (A.length > 3000 || B.length > 3000) {
+    return { added:0, removed:0,
+             html:'<div class="gap">Too large to diff on a phone.</div>' };
+  }
+
+  // lcs[i][j] = length of the longest common subsequence of A[i..] and B[j..]
+  const lcs = Array.from({ length: A.length + 1 }, () => new Uint32Array(B.length + 1));
+  for (let i = A.length - 1; i >= 0; i--) {
+    for (let j = B.length - 1; j >= 0; j--) {
+      lcs[i][j] = A[i] === B[j] ? lcs[i + 1][j + 1] + 1
+                                : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+
+  const rows = [];
+  let i = 0, j = 0, added = 0, removed = 0;
+  while (i < A.length && j < B.length) {
+    if (A[i] === B[j])                   { rows.push(['ctx', A[i]]); i++; j++; }
+    else if (lcs[i + 1][j] >= lcs[i][j + 1]) { rows.push(['del', A[i]]); i++; removed++; }
+    else                                 { rows.push(['add', B[j]]); j++; added++; }
+  }
+  while (i < A.length) { rows.push(['del', A[i++]]); removed++; }
+  while (j < B.length) { rows.push(['add', B[j++]]); added++; }
+
+  // Collapse long stretches of unchanged lines — nobody scrolls through those.
+  const html = [];
+  let run = 0;
+  rows.forEach((row, k) => {
+    if (row[0] === 'ctx') {
+      run++;
+      const nearChange = rows.slice(Math.max(0, k - 3), k + 4).some(r => r[0] !== 'ctx');
+      if (!nearChange) { if (run === 4) html.push('<div class="gap">⋯</div>'); return; }
+    } else run = 0;
+    html.push(`<div class="${row[0]}">${esc(row[1]) || '&nbsp;'}</div>`);
+  });
+
+  return { added, removed, html: html.join('') };
+}
+
+const esc = t => String(t).replace(/[&<>"]/g, c =>
+  ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
 
 
 /* --- 7a2. The New sheet — everything you can add ------------- */
@@ -1214,17 +1505,230 @@ function repoSheet(){
       ${priv ? 'Private' : 'Public'} · default branch <b>${S.repo.default_branch}</b>
     </div>
     <div class="sheetlist">
+      <button id="r-search">Search code<small>Find a file without walking the tree</small></button>
+      <button id="r-log">History<small>Recent commits on ${S.branch}</small></button>
+      <button id="r-prs">Pull requests<small>Open, review and merge</small></button>
+      <button id="r-runs">Actions<small>Watch the build that ships this app</small></button>
+      ${canPR ? `<button id="r-pr">Open pull request<small>${S.branch} → ${S.repo.default_branch}</small></button>` : ''}
+      ${canPR ? `<button id="r-delbr">Delete branch<small>Removes ${S.branch}. The commits survive in any PR.</small></button>` : ''}
       <button id="r-vis">Make ${priv ? 'public' : 'private'}<small>${
         priv ? 'Anyone on GitHub will be able to read this repository'
              : 'Only you will be able to see this repository'
       }</small></button>
-      ${canPR ? `<button id="r-pr">Open pull request<small>${S.branch} → ${S.repo.default_branch}</small></button>` : ''}
     </div>
     <button class="btn wide" onclick="closeSheet()">Close</button>
   `, () => {
-    $('r-vis').onclick = doToggleVisibility;
-    if ($('r-pr')) $('r-pr').onclick = prSheet;
+    $('r-search').onclick = () => { closeSheet(); openSearch(); };
+    $('r-log').onclick    = () => { closeSheet(); openLog(null); };
+    $('r-prs').onclick    = () => { closeSheet(); openPRs(); };
+    $('r-runs').onclick   = () => { closeSheet(); openActions(); };
+    $('r-vis').onclick    = doToggleVisibility;
+    if ($('r-pr'))    $('r-pr').onclick    = prSheet;
+    if ($('r-delbr')) $('r-delbr').onclick = doDeleteBranch;
   });
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   HISTORY · SEARCH · ACTIONS · PULL REQUESTS
+   Four read-mostly screens. Each is a list; each row goes somewhere useful.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+const ago = iso => {
+  const s = (Date.now() - new Date(iso)) / 1000;
+  if (s < 3600)  return Math.round(s / 60) + 'm';
+  if (s < 86400) return Math.round(s / 3600) + 'h';
+  if (s < 2592000) return Math.round(s / 86400) + 'd';
+  return new Date(iso).toISOString().slice(0, 10);
+};
+
+/* ── History ─────────────────────────────────────────────────────────── */
+async function openLog(path){
+  show('log');
+  const v = $('v-log');
+  v.innerHTML = '<div class="empty">Loading…</div>';
+  setBar([{ label:'Back', onClick:() => path ? openFile(path) : loadTree(S.path), solid:true }]);
+
+  try {
+    const cs = await api.commits(S.repo.owner, S.repo.name, S.branch, path);
+    if (!cs.length) { v.innerHTML = '<div class="empty">No commits.</div>'; return; }
+
+    v.innerHTML = `<h1>${path ? path.split('/').pop() : S.branch}</h1>`;
+    cs.forEach(c => {
+      const b = document.createElement('button');
+      b.className = 'row';
+      b.innerHTML = `
+        <span class="glyph">${c.sha.slice(0, 2)}</span>
+        <span class="name">${esc(c.commit.message.split('\n')[0])}</span>
+        <span class="meta">${ago(c.commit.author.date)}</span>`;
+      // GitHub renders a commit diff far better than we can on a phone.
+      b.onclick = () => window.Native
+        ? window.Native.openUrl(c.html_url)
+        : window.open(c.html_url, '_blank');
+      v.appendChild(b);
+    });
+  } catch (e) {
+    v.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+
+/* ── Code search ─────────────────────────────────────────────────────── */
+function openSearch(){
+  show('search');
+  setBar([{ label:'Back', onClick:() => loadTree(S.path), solid:true }]);
+  $('results').innerHTML = '<div class="empty">Type to search.</div>';
+  setTimeout(() => $('q').focus(), 60);
+}
+
+$('q').addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); });
+
+async function runSearch(){
+  const q = $('q').value.trim();
+  if (!q) return;
+
+  const box = $('results');
+  box.innerHTML = '<div class="empty">Searching…</div>';
+
+  try {
+    const res = await api.search(S.repo.owner, S.repo.name, q);
+    if (!res.items.length) {
+      box.innerHTML = '<div class="empty">Nothing found.<br><br>' +
+        'GitHub indexes code lazily — a repository created minutes ago may not be searchable yet.</div>';
+      return;
+    }
+    box.innerHTML = '';
+    res.items.forEach(it => {
+      const b = document.createElement('button');
+      b.className = 'row';
+      b.innerHTML = `
+        <span class="glyph">·</span>
+        <span class="name">${esc(it.path)}</span>`;
+      b.onclick = () => openFile(it.path);
+      box.appendChild(b);
+    });
+  } catch (e) {
+    box.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+
+/* ── Actions ─────────────────────────────────────────────────────────── */
+async function openActions(){
+  show('actions');
+  const v = $('v-actions');
+  v.innerHTML = '<div class="empty">Loading…</div>';
+  setBar([
+    { label:'Back',    onClick:() => loadTree(S.path) },
+    { label:'Refresh', onClick:openActions, solid:true, grow:true }
+  ]);
+
+  try {
+    const { workflow_runs: runs } = await api.runs(S.repo.owner, S.repo.name);
+    if (!runs.length) { v.innerHTML = '<div class="empty">No runs yet.</div>'; return; }
+
+    v.innerHTML = '<h1>Actions</h1>';
+    runs.forEach(r => {
+      // A run in flight has no conclusion yet — that is a third state, not a failure.
+      const cls = r.status !== 'completed' ? 'run-wait'
+                : r.conclusion === 'success' ? 'run-ok' : 'run-bad';
+
+      const b = document.createElement('button');
+      b.className = 'row';
+      b.innerHTML = `
+        <span class="glyph ${cls}"></span>
+        <span class="name">${esc(r.name)} <span style="color:var(--dim)">#${r.run_number}</span></span>
+        <span class="meta">${ago(r.created_at)}</span>`;
+      // The APK lives behind an authenticated download, so hand the run to the
+      // browser, where you are already signed in to GitHub.
+      b.onclick = () => window.Native
+        ? window.Native.openUrl(r.html_url)
+        : window.open(r.html_url, '_blank');
+      v.appendChild(b);
+    });
+  } catch (e) {
+    v.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+
+/* ── Pull requests ───────────────────────────────────────────────────── */
+async function openPRs(){
+  show('prs');
+  const v = $('v-prs');
+  v.innerHTML = '<div class="empty">Loading…</div>';
+  setBar([{ label:'Back', onClick:() => loadTree(S.path), solid:true }]);
+
+  try {
+    const prs = await api.prs(S.repo.owner, S.repo.name);
+    if (!prs.length) { v.innerHTML = '<div class="empty">No open pull requests.</div>'; return; }
+
+    v.innerHTML = '<h1>Pull requests</h1>';
+    prs.forEach(pr => {
+      const b = document.createElement('button');
+      b.className = 'row';
+      b.innerHTML = `
+        <span class="glyph">#${pr.number}</span>
+        <span class="name">${esc(pr.title)}</span>
+        <span class="meta">${esc(pr.head.ref)}</span>`;
+      b.onclick = () => mergeSheet(pr);
+      v.appendChild(b);
+    });
+  } catch (e) {
+    v.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+
+function mergeSheet(pr){
+  sheet('Pull request #' + pr.number, `
+    <div class="overwrite">
+      <b>${esc(pr.title)}</b><br>
+      ${esc(pr.head.ref)} → ${esc(pr.base.ref)}
+    </div>
+    <div class="sheetlist">
+      <button id="p-open">View on GitHub<small>Diff, comments, checks</small></button>
+    </div>
+    <button class="btn solid wide" id="p-merge">Merge</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => {
+    $('p-open').onclick = () => window.Native
+      ? window.Native.openUrl(pr.html_url)
+      : window.open(pr.html_url, '_blank');
+
+    $('p-merge').onclick = async () => {
+      const btn = $('p-merge');
+      busy(btn, true, 'Merging…');
+      try {
+        await api.mergePR(S.repo.owner, S.repo.name, pr.number, {
+          merge_method: 'merge'
+        });
+        closeSheet();
+        toast('Merged #' + pr.number);
+        await openPRs();
+      } catch (e) {
+        // 405 means GitHub refuses: conflicts, or required checks still red.
+        toast(e.status === 405 ? 'GitHub will not merge this yet — conflicts, or checks are failing.'
+                               : e.message, 6000);
+      } finally {
+        busy(btn, false);
+      }
+    };
+  });
+}
+
+/* ── Delete a branch ─────────────────────────────────────────────────── */
+async function doDeleteBranch(){
+  const gone = S.branch;
+  if (gone === S.repo.default_branch) { toast('That is the default branch.'); return; }
+  if (!confirm('Delete the branch ' + gone + '?')) return;
+
+  closeSheet();
+  try {
+    await api.delRef(S.repo.owner, S.repo.name, gone);
+    S.branch = S.repo.default_branch;
+    await loadBranches();
+    await loadTree('');
+    toast('Deleted ' + gone);
+  } catch (e) {
+    toast(e.message, 6000);
+  }
 }
 
 async function doToggleVisibility(){
@@ -1683,6 +2187,83 @@ window.addEventListener('beforeunload', e => {
 
 
 /* ── BOOT ─────────────────────────────────────────────────── */
+/* ── Markdown ─────────────────────────────────────────────────────────────
+   Enough of it to make a README readable: headings, emphasis, code, lists,
+   quotes, links, images, rules, tables. Everything is escaped first, so a file
+   containing raw HTML is shown, never executed.
+   ──────────────────────────────────────────────────────────────────────── */
+function markdown(src){
+  const blocks = [];   // fenced code is lifted out before anything else touches it
+  let t = esc(src).replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    blocks.push(`<pre><code>${code.replace(/\n$/, '')}</code></pre>`);
+    return '\u0000' + (blocks.length - 1) + '\u0000';
+  });
+
+  const inline = x => x
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1">')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/(^|\W)\*([^*]+)\*/g, '$1<i>$2</i>')
+    .replace(/~~([^~]+)~~/g, '<s>$1</s>');
+
+  const out = [];
+  let list = null;   // 'ul' | 'ol' | null
+
+  const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
+
+  t.split('\n').forEach(line => {
+    let m;
+
+    if (/^\u0000\d+\u0000$/.test(line)) { closeList(); out.push(line); return; }
+    if (/^\s*$/.test(line))              { closeList(); return; }
+    if (/^(-{3,}|\*{3,})$/.test(line.trim())) { closeList(); out.push('<hr>'); return; }
+
+    if ((m = line.match(/^(#{1,6})\s+(.*)$/))) {
+      closeList();
+      const lvl = Math.min(m[1].length, 3);
+      out.push(`<h${lvl}>${inline(m[2])}</h${lvl}>`);
+      return;
+    }
+
+    if ((m = line.match(/^&gt;\s?(.*)$/))) {
+      closeList();
+      out.push(`<blockquote>${inline(m[1])}</blockquote>`);
+      return;
+    }
+
+    if ((m = line.match(/^\s*[-*+]\s+(.*)$/))) {
+      if (list !== 'ul') { closeList(); out.push('<ul>'); list = 'ul'; }
+      out.push(`<li>${inline(m[1])}</li>`);
+      return;
+    }
+
+    if ((m = line.match(/^\s*\d+\.\s+(.*)$/))) {
+      if (list !== 'ol') { closeList(); out.push('<ol>'); list = 'ol'; }
+      out.push(`<li>${inline(m[1])}</li>`);
+      return;
+    }
+
+    // A table row. The |---|---| separator is structure, not content.
+    if (/^\s*\|.*\|\s*$/.test(line)) {
+      if (/^\s*\|[\s:|-]+\|\s*$/.test(line)) return;
+      closeList();
+      const cells = line.trim().slice(1, -1).split('|').map(c => `<td>${inline(c.trim())}</td>`).join('');
+      const prev = out[out.length - 1];
+      if (prev && prev.startsWith('<table>')) out[out.length - 1] = prev.replace(/<\/table>$/, `<tr>${cells}</tr></table>`);
+      else out.push(`<table><tr>${cells}</tr></table>`);
+      return;
+    }
+
+    closeList();
+    out.push(`<p>${inline(line)}</p>`);
+  });
+  closeList();
+
+  return out.join('')
+            .replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[i]);
+}
+
 function paintBackend(){
   const el = $('backend');
   if (!el) return;
