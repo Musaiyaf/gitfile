@@ -5,10 +5,14 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.ContentValues;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
+import android.provider.MediaStore;
 import android.util.Base64;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -20,14 +24,25 @@ import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.app.Activity;
 
+import androidx.core.content.FileProvider;
 import androidx.documentfile.provider.DocumentFile;
 import androidx.webkit.WebViewAssetLoader;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -289,6 +304,156 @@ public class MainActivity extends Activity {
             }
         }
 
+        /**
+         * Fetch an authenticated URL as text, natively.
+         *
+         * This exists for one reason: GitHub's job-log endpoint answers with a 302
+         * to blob storage, and that storage sends no Access-Control-Allow-Origin
+         * header. A fetch() from the page follows the redirect, hits the missing
+         * header, and dies with "Failed to fetch" — the same wall the OAuth
+         * endpoints put up. Java has no CORS, so the request simply works.
+         *
+         * Logs run to megabytes. Only the tail is worth reading, and only the tail
+         * is sent across the bridge.
+         */
+        @JavascriptInterface
+        public void fetchLog(String url, String token, String callback) {
+            new Thread(() -> {
+                try {
+                    HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+                    c.setRequestProperty("Authorization", "Bearer " + token);
+                    c.setRequestProperty("Accept", "application/vnd.github+json");
+                    c.setInstanceFollowRedirects(true);
+                    c.setConnectTimeout(20000);
+                    c.setReadTimeout(30000);
+
+                    InputStream in = c.getResponseCode() < 400 ? c.getInputStream() : c.getErrorStream();
+                    if (in == null) { js(callback, "", "Empty response."); return; }
+
+                    // Keep a rolling window of the last 1200 lines. A whole build log
+                    // can be tens of megabytes; nobody scrolls up that far, and the
+                    // failure is always at the end.
+                    java.util.ArrayDeque<String> tail = new java.util.ArrayDeque<>();
+                    try (BufferedReader r = new BufferedReader(
+                             new InputStreamReader(in, StandardCharsets.UTF_8))) {
+                        for (String line; (line = r.readLine()) != null; ) {
+                            tail.addLast(line);
+                            if (tail.size() > 1200) tail.removeFirst();
+                        }
+                    }
+                    js(callback, String.join("\n", tail), "");
+
+                } catch (Exception e) {
+                    js(callback, "", "Could not fetch the log: " + e.getMessage());
+                }
+            }).start();
+        }
+
+        /**
+         * Download an Actions artifact and, if it contains an APK, hand it to
+         * Android's installer.
+         *
+         * Three things make this native rather than a fetch() from the page:
+         *
+         *   1. The download URL is authenticated, then 302s to blob storage, and
+         *      blob storage sends no Access-Control-Allow-Origin header. A WebView
+         *      cannot follow that redirect. This is the same wall the job logs and
+         *      the OAuth endpoints put up.
+         *   2. Every GitHub artifact is a ZIP, even when it holds one file. The APK
+         *      has to be pulled out of it.
+         *   3. Installing needs a content:// URI from a FileProvider. Handing the
+         *      installer a file:// path throws on anything since Android 7.
+         */
+        @JavascriptInterface
+        public void download(String url, String token) {
+            new Thread(() -> {
+                try {
+                    File dir = new File(getCacheDir(), "dl");
+                    deleteTree(dir);                 // last build's APK is dead weight
+                    dir.mkdirs();
+
+                    HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+                    c.setRequestProperty("Authorization", "Bearer " + token);
+                    c.setRequestProperty("Accept", "application/vnd.github+json");
+                    c.setInstanceFollowRedirects(true);
+                    c.setConnectTimeout(20000);
+                    c.setReadTimeout(60000);
+
+                    if (c.getResponseCode() >= 400) {
+                        js("onDownloadError", "GitHub refused the download (" + c.getResponseCode()
+                            + "). The token needs Actions: read.");
+                        return;
+                    }
+
+                    long total = c.getContentLengthLong();
+                    File zip = new File(dir, "artifact.zip");
+
+                    try (InputStream in = c.getInputStream();
+                         FileOutputStream out = new FileOutputStream(zip)) {
+                        byte[] buf = new byte[32768];
+                        long got = 0;
+                        int lastPct = -1;
+                        for (int n; (n = in.read(buf)) > 0; ) {
+                            out.write(buf, 0, n);
+                            got += n;
+                            if (total > 0) {
+                                int pct = (int) (got * 100 / total);
+                                // Only speak when the number actually changes; otherwise
+                                // this floods the JS bridge with identical messages.
+                                if (pct != lastPct) {
+                                    lastPct = pct;
+                                    js("onDownloadProgress", String.valueOf(pct));
+                                }
+                            }
+                        }
+                    }
+
+                    // Unpack. An APK inside is the thing we are really after.
+                    File apk = null;
+                    try (ZipInputStream zis = new ZipInputStream(new java.io.FileInputStream(zip))) {
+                        for (ZipEntry e; (e = zis.getNextEntry()) != null; ) {
+                            String name = new File(e.getName()).getName();   // no path traversal
+                            if (e.isDirectory() || name.isEmpty()) continue;
+
+                            File out = new File(dir, name);
+                            try (FileOutputStream fo = new FileOutputStream(out)) {
+                                byte[] buf = new byte[32768];
+                                for (int n; (n = zis.read(buf)) > 0; ) fo.write(buf, 0, n);
+                            }
+                            if (name.toLowerCase().endsWith(".apk")) apk = out;
+                        }
+                    }
+
+                    if (apk != null) {
+                        js("onDownloadDone", "apk", apk.getAbsolutePath(), apk.getName());
+                    } else {
+                        String saved = saveToDownloads(zip, "artifact.zip");
+                        js("onDownloadDone", "zip", "", saved);
+                    }
+
+                } catch (Exception e) {
+                    js("onDownloadError", "Download failed: " + e.getMessage());
+                }
+            }).start();
+        }
+
+        /** Ask Android to install an APK we just downloaded. */
+        @JavascriptInterface
+        public void install(String path) {
+            try {
+                File f = new File(path);
+                Uri uri = FileProvider.getUriForFile(
+                        MainActivity.this, getPackageName() + ".files", f);
+
+                Intent i = new Intent(Intent.ACTION_VIEW);
+                i.setDataAndType(uri, "application/vnd.android.package-archive");
+                i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(i);
+            } catch (Exception e) {
+                js("onDownloadError", "Could not open the installer: " + e.getMessage());
+            }
+        }
+
         /** Call a global JS function on the UI thread. */
         void js(String fn, String... args) {
             StringBuilder call = new StringBuilder(fn).append("(");
@@ -302,6 +467,49 @@ public class MainActivity extends Activity {
     }
 
     private Native bridge;
+
+    private static void deleteTree(File f) {
+        if (f == null || !f.exists()) return;
+        File[] kids = f.listFiles();
+        if (kids != null) for (File k : kids) deleteTree(k);
+        f.delete();
+    }
+
+    /**
+     * Put a file into the user's Downloads folder.
+     *
+     * Android 10 rewrote how this works: MediaStore, no permission needed. Below
+     * that, it is a direct write to public storage and needs WRITE_EXTERNAL_STORAGE,
+     * which the manifest asks for only up to API 28.
+     */
+    private String saveToDownloads(File src, String name) throws Exception {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ContentValues v = new ContentValues();
+            v.put(MediaStore.Downloads.DISPLAY_NAME, name);
+            v.put(MediaStore.Downloads.MIME_TYPE, "application/zip");
+            v.put(MediaStore.Downloads.IS_PENDING, 1);
+
+            Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+            try (OutputStream out = getContentResolver().openOutputStream(uri);
+                 InputStream in = new java.io.FileInputStream(src)) {
+                byte[] buf = new byte[32768];
+                for (int n; (n = in.read(buf)) > 0; ) out.write(buf, 0, n);
+            }
+            v.clear();
+            v.put(MediaStore.Downloads.IS_PENDING, 0);
+            getContentResolver().update(uri, v, null, null);
+            return name;
+        }
+
+        File dst = new File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), name);
+        try (InputStream in = new java.io.FileInputStream(src);
+             FileOutputStream out = new FileOutputStream(dst)) {
+            byte[] buf = new byte[32768];
+            for (int n; (n = in.read(buf)) > 0; ) out.write(buf, 0, n);
+        }
+        return dst.getName();
+    }
 
     /** Walk a picked folder depth-first, flattening it into paths the repo can use. */
     private void walkFolder(DocumentFile dir, String prefix) {
