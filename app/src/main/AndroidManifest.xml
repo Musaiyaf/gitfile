@@ -5,6 +5,15 @@
          nothing else. No storage, no camera, no contacts. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- To hand a downloaded APK to Android's package installer. The user still
+         has to grant "install unknown apps" to gitfile the first time. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!-- Only needed to drop a non-APK artifact into Downloads on Android 9 and
+         below. Android 10 onwards uses MediaStore, which needs no permission. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
@@ -23,6 +32,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Grants the installer temporary read access to one file in our cache. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
     </application>
 </manifest>
