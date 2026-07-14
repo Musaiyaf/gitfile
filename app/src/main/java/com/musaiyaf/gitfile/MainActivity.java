@@ -21,15 +21,6 @@ import android.app.Activity;
 
 import androidx.webkit.WebViewAssetLoader;
 
-import org.json.JSONObject;
-
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
-
 /**
  * The whole app is one HTML file in assets/. This class exists only to put a
  * WebView on screen and point it at that file.
@@ -53,21 +44,6 @@ public class MainActivity extends Activity {
 
     private static final String APP_ORIGIN = "https://appassets.androidplatform.net";
 
-    /**
-     * The GitHub App's client ID. NOT a secret — it is meant to be embedded in a
-     * distributed app, which is the whole reason the device flow exists. The client
-     * SECRET must never appear here; the device flow does not need one, and anyone
-     * can unzip an APK.
-     *
-     * Create a GitHub App (not an OAuth App) at
-     * Settings -> Developer settings -> GitHub Apps, and tick "Enable Device Flow".
-     *
-     * A GitHub App is the right choice over an OAuth App because it gives the user
-     * the "All repositories / Only select repositories" picker at install time, and
-     * its permissions are the fine-grained ones (Contents, Pull requests,
-     * Administration) rather than the all-or-nothing `repo` scope.
-     */
-    private static final String CLIENT_ID = "REPLACE_WITH_YOUR_CLIENT_ID";
 
     private WebView web;
 
@@ -176,7 +152,6 @@ public class MainActivity extends Activity {
      */
     public class Native {
         private final SharedPreferences prefs;
-        private volatile boolean cancelled = false;
 
         Native(Context ctx) {
             this.prefs = ctx.getSharedPreferences("gitfile", MODE_PRIVATE);
@@ -197,6 +172,7 @@ public class MainActivity extends Activity {
             prefs.edit().remove(key).apply();
         }
 
+        /** Open a link in the real browser rather than inside the app. */
         @JavascriptInterface
         public void openUrl(String url) {
             startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
@@ -205,158 +181,7 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void copy(String text) {
             ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-            cm.setPrimaryClip(ClipData.newPlainText("code", text));
-        }
-
-        @JavascriptInterface
-        public void cancelDeviceLogin() {
-            cancelled = true;
-        }
-
-        /**
-         * The OAuth device flow, start to finish.
-         *
-         * It lives here rather than in JavaScript for one reason: github.com's OAuth
-         * endpoints send no Access-Control-Allow-Origin header, so a fetch() from the
-         * page is refused by the browser before it ever reaches the network. Java has
-         * no such rule.
-         *
-         * Ask GitHub for a code, hand it to the page to display, then poll until the
-         * user approves it in their browser.
-         */
-        @JavascriptInterface
-        public void startDeviceLogin() {
-            cancelled = false;
-            new Thread(() -> {
-                try {
-                    // No scope parameter: a GitHub App's permissions are declared on
-                    // the app itself, and the repositories it can see are chosen by the
-                    // user when they install it.
-                    JSONObject start = postForm(
-                            "https://github.com/login/device/code",
-                            "client_id=" + CLIENT_ID);
-
-                    if (start.has("error")) {
-                        // Almost always: Device Flow isn't enabled on the OAuth App.
-                        js("onDeviceError", start.optString("error_description", start.getString("error")));
-                        return;
-                    }
-
-                    String deviceCode = start.getString("device_code");
-                    String userCode   = start.getString("user_code");
-                    String verifyUrl  = start.getString("verification_uri");
-                    int    interval   = start.optInt("interval", 5);
-                    long   deadline   = System.currentTimeMillis() + start.optInt("expires_in", 900) * 1000L;
-
-                    js("onDeviceCode", userCode, verifyUrl);
-
-                    while (System.currentTimeMillis() < deadline) {
-                        Thread.sleep(interval * 1000L);
-                        if (cancelled) return;
-
-                        JSONObject poll = postForm(
-                                "https://github.com/login/oauth/access_token",
-                                "client_id=" + CLIENT_ID
-                                        + "&device_code=" + deviceCode
-                                        + "&grant_type=urn:ietf:params:oauth:grant-type:device_code");
-
-                        if (poll.has("access_token")) {
-                            // A GitHub App's user token expires after 8 hours unless the
-                            // app has token expiry switched off. The refresh token, good
-                            // for 6 months, is how we avoid making the user sign in again.
-                            js("onDeviceToken",
-                               poll.getString("access_token"),
-                               poll.optString("refresh_token", ""));
-                            return;
-                        }
-
-                        String err = poll.optString("error", "");
-                        switch (err) {
-                            case "authorization_pending":
-                                break;                  // the user hasn't finished yet
-                            case "slow_down":
-                                interval += 5;          // GitHub says we're polling too fast
-                                break;
-                            case "expired_token":
-                                js("onDeviceError", "That code expired. Start again.");
-                                return;
-                            case "access_denied":
-                                js("onDeviceError", "Approval was declined.");
-                                return;
-                            default:
-                                js("onDeviceError", poll.optString("error_description", "Sign-in failed."));
-                                return;
-                        }
-                    }
-                    js("onDeviceError", "That code expired. Start again.");
-
-                } catch (Exception e) {
-                    js("onDeviceError", "Could not reach GitHub: " + e.getMessage());
-                }
-            }).start();
-        }
-
-        /**
-         * Trade an expiring refresh token for a fresh access token. Called when the
-         * saved token comes back 401 on startup, so the user never sees a sign-in
-         * screen they didn't ask for.
-         */
-        @JavascriptInterface
-        public void refresh(String refreshToken) {
-            new Thread(() -> {
-                try {
-                    JSONObject r = postForm(
-                            "https://github.com/login/oauth/access_token",
-                            "client_id=" + CLIENT_ID
-                                    + "&grant_type=refresh_token"
-                                    + "&refresh_token=" + Uri.encode(refreshToken));
-
-                    if (r.has("access_token")) {
-                        js("onDeviceToken",
-                           r.getString("access_token"),
-                           r.optString("refresh_token", ""));
-                    } else {
-                        js("onRefreshFailed");   // refresh token dead: sign in properly
-                    }
-                } catch (Exception e) {
-                    js("onRefreshFailed");
-                }
-            }).start();
-        }
-
-        /** POST a form body and read the JSON reply. */
-        private JSONObject postForm(String url, String body) throws Exception {
-            HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-            c.setRequestMethod("POST");
-            c.setRequestProperty("Accept", "application/json");
-            c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-            c.setDoOutput(true);
-            c.setConnectTimeout(15000);
-            c.setReadTimeout(15000);
-
-            try (OutputStream os = c.getOutputStream()) {
-                os.write(body.getBytes(StandardCharsets.UTF_8));
-            }
-
-            // GitHub returns its error payloads with a 4xx status, so read whichever
-            // stream is actually there.
-            java.io.InputStream in = c.getResponseCode() < 400 ? c.getInputStream() : c.getErrorStream();
-            StringBuilder sb = new StringBuilder();
-            try (BufferedReader r = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
-                for (String line; (line = r.readLine()) != null; ) sb.append(line);
-            }
-            return new JSONObject(sb.toString());
-        }
-
-        /** Call a global JS function on the UI thread, with string arguments. */
-        private void js(String fn, String... args) {
-            StringBuilder call = new StringBuilder(fn).append("(");
-            for (int i = 0; i < args.length; i++) {
-                if (i > 0) call.append(",");
-                call.append(JSONObject.quote(args[i]));   // quotes and escapes properly
-            }
-            call.append(")");
-            runOnUiThread(() -> web.evaluateJavascript(call.toString(), null));
+            cm.setPrimaryClip(ClipData.newPlainText("gitfile", text));
         }
     }
 
