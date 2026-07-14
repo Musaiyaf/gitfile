@@ -506,6 +506,25 @@ public class MainActivity extends Activity {
             }).start();
         }
 
+        /**
+         * Copy a downloaded file out of our cache and into the user's Downloads.
+         *
+         * The cache is wiped on the next download, so "install now" and "keep a
+         * copy" are genuinely different choices — which is why the app asks.
+         */
+        @JavascriptInterface
+        public void saveFile(String path) {
+            new Thread(() -> {
+                try {
+                    File f = new File(path);
+                    String saved = saveToDownloads(f, f.getName());
+                    js("onFileSaved", saved, "");
+                } catch (Exception e) {
+                    js("onFileSaved", "", "Could not save: " + e.getMessage());
+                }
+            }).start();
+        }
+
         /** Ask Android to install an APK we just downloaded. */
         @JavascriptInterface
         public void install(String path) {
@@ -558,10 +577,14 @@ public class MainActivity extends Activity {
      * which the manifest asks for only up to API 28.
      */
     private String saveToDownloads(File src, String name) throws Exception {
+        String mime = name.toLowerCase().endsWith(".apk")
+                ? "application/vnd.android.package-archive"
+                : "application/zip";
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ContentValues v = new ContentValues();
             v.put(MediaStore.Downloads.DISPLAY_NAME, name);
-            v.put(MediaStore.Downloads.MIME_TYPE, "application/zip");
+            v.put(MediaStore.Downloads.MIME_TYPE, mime);
             v.put(MediaStore.Downloads.IS_PENDING, 1);
 
             Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
