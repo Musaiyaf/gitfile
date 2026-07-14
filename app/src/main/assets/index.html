@@ -221,6 +221,31 @@ input.masked.plain{ -webkit-text-security:none; text-security:none; letter-spaci
 }
 .check input:focus-visible + .box{ outline:1px solid var(--pure); outline-offset:2px; }
 
+/* ── Progress ─────────────────────────────────────────────────
+   A hairline trough that fills with solid white. Determinate, because we know
+   exactly how many files there are — a spinner would be pretending otherwise.
+   ──────────────────────────────────────────────────────────── */
+.bar{
+  height:2px; background:var(--raised);
+  border:0; margin:18px 0 10px;
+  overflow:hidden;
+}
+.bar > i{
+  display:block; height:100%; width:0;
+  background:var(--pure);
+  transition:width .18s linear;
+}
+@media (prefers-reduced-motion:reduce){ .bar > i{ transition:none; } }
+
+.barstat{
+  display:flex; justify-content:space-between; gap:12px;
+  font-size:11px; color:var(--dim);
+}
+.barstat .now{
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  direction:rtl; text-align:left;      /* keep the filename end visible */
+}
+
 .tokmeta button{
   background:none; border:0; color:var(--text); font:inherit; padding:4px;
   text-decoration:underline; text-underline-offset:3px; text-decoration-color:var(--rule-lit);
@@ -685,7 +710,10 @@ async function commitFiles(entries, message, onProgress){
     if (e.delete) {
       tree.push({ path: e.path, mode: '100644', type: 'blob', sha: null });
     } else {
-      const blob = await api.makeBlob(o, r, { content: e.b64, encoding: 'base64' });
+      // b64 is already here for files the browser read; for a folder picked through
+      // Android it is fetched now, one file at a time.
+      const b64 = (e.b64 != null) ? e.b64 : await nativeB64(e.index);
+      const blob = await api.makeBlob(o, r, { content: b64, encoding: 'base64' });
       tree.push({ path: e.path, mode: '100644', type: 'blob', sha: blob.sha });
     }
   }
@@ -1374,13 +1402,34 @@ window.onFolderPicked = (json) => {
 
   if (!files.length) { toast('No files in that folder.'); return; }
 
+  // No bytes yet — only paths and sizes. Each file is read from the device at the
+  // moment it is uploaded, so a big folder never has to fit in memory at once.
   const here = S.path ? S.path + '/' : '';
-  uploadSheet(files.map(f => ({ path: here + f.path, b64: f.b64 })));
+  uploadSheet(files.map(f => ({
+    path:  here + f.path,
+    size:  f.size,
+    index: f.index          // the handle MainActivity reads it back by
+  })));
 };
 
+/* Pull one file's bytes across the bridge. The setTimeout matters: the native read
+   blocks the JS thread, so without yielding first the progress bar would never get
+   a chance to paint. */
+function nativeB64(index){
+  return new Promise((res, rej) => {
+    setTimeout(() => {
+      const b64 = window.Native.readEntry(index);
+      if (b64 === null || b64 === undefined) rej(new Error('Could not read a file from that folder.'));
+      else res(b64);
+    }, 0);
+  });
+}
+
 function uploadSheet(entries){
-  // base64 is 4 chars per 3 bytes; close enough for a size readout.
-  const size = entries.reduce((n, e) => n + Math.ceil(e.b64.length * 3 / 4), 0);
+  // Files read by the browser carry their bytes already (base64 is 4 chars per 3
+  // bytes); files coming from Android's folder picker carry a real size instead.
+  const size = entries.reduce(
+    (n, e) => n + (e.size != null ? e.size : Math.ceil(e.b64.length * 3 / 4)), 0);
   const n = entries.length;
 
   sheet('Upload', `
@@ -1392,10 +1441,22 @@ function uploadSheet(entries){
       <label for="umsg">Message</label>
       <input type="text" id="umsg" placeholder="Add ${n} file${n === 1 ? '' : 's'}">
     </div>
+
+    <div id="uprog" style="display:none">
+      <div class="bar"><i id="ubar"></i></div>
+      <div class="barstat">
+        <span class="now" id="unow"></span>
+        <span id="ucount">0/${n}</span>
+      </div>
+    </div>
+
     <button class="btn solid wide" id="ugo">Commit all ${n} as one</button>
     <div style="height:10px"></div>
-    <button class="btn wide" onclick="closeSheet()">Cancel</button>
-  `, () => { $('ugo').onclick = () => doUpload(entries); });
+    <button class="btn wide" id="ucancel">Cancel</button>
+  `, () => {
+    $('ugo').onclick     = () => doUpload(entries);
+    $('ucancel').onclick = closeSheet;
+  });
 }
 
 async function doUpload(entries){
@@ -1403,10 +1464,21 @@ async function doUpload(entries){
   const n   = entries.length;
   const msg = $('umsg').value.trim() || ('Add ' + n + ' file' + (n === 1 ? '' : 's'));
 
+  $('uprog').style.display = 'block';
+  $('ucancel').disabled = true;          // a half-built tree is not worth abandoning
   busy(btn, true, 'Uploading…');
+
   try {
-    const c = await commitFiles(entries, msg,
-      (i, total) => busy(btn, true, `Uploading ${i + 1}/${total}…`));
+    const c = await commitFiles(entries, msg, (i, total, path) => {
+      $('ubar').style.width  = Math.round(i / total * 100) + '%';
+      $('ucount').textContent = i + '/' + total;
+      $('unow').innerHTML     = '<span dir="ltr">' + path.split('/').pop() + '</span>';
+    });
+
+    // The blobs are all up; the tree, commit and ref move are near-instant.
+    $('ubar').style.width   = '100%';
+    $('ucount').textContent = n + '/' + n;
+
     closeSheet();
     toast('Committed ' + n + ' file' + (n === 1 ? '' : 's') + ' · ' + c.sha.slice(0, 7));
     await loadTree(S.path);
@@ -1414,6 +1486,7 @@ async function doUpload(entries){
     toast(e.message, 6000);
   } finally {
     busy(btn, false);
+    $('ucancel').disabled = false;
   }
 }
 
