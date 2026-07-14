@@ -324,18 +324,6 @@ input.masked.plain{ -webkit-text-security:none; text-security:none; letter-spaci
       <h1>Sign in</h1>
       <div class="pad">
 
-        <!-- The good path. Tap, approve on github.com, done. -->
-        <div id="devicebox" style="display:none">
-          <button class="btn solid wide" id="devicego">Sign in with GitHub</button>
-          <p class="hint">
-            GitHub shows you a short code. You approve it once, in the browser.
-            Nothing to copy, nothing to paste.
-          </p>
-          <div style="height:28px"></div>
-          <button class="btn wide" id="usetoken">Use a personal access token instead</button>
-        </div>
-
-        <div id="tokenbox">
         <div class="field">
           <label for="tok">GitHub token</label>
           <input type="text" id="tok" name="gitfile-token" class="masked"
@@ -368,7 +356,6 @@ input.masked.plain{ -webkit-text-security:none; text-security:none; letter-spaci
         </div>
 
         <button class="btn solid wide" id="signin">Sign in</button>
-        </div><!-- /tokenbox -->
       </div>
     </section>
 
@@ -482,8 +469,7 @@ const store = {
   }
 };
 
-const TOKEN_KEY   = 'gitfile:token';
-const REFRESH_KEY = 'gitfile:refresh';
+const TOKEN_KEY = 'gitfile:token';
 
 
 /* ── 2. STATE ─────────────────────────────────────────────── */
@@ -824,7 +810,6 @@ $('tok').addEventListener('keydown', e => { if (e.key === 'Enter') $('signin').c
 
 async function signOut(){
   await store.del(TOKEN_KEY);
-  await store.del(REFRESH_KEY);
   Object.assign(S, { token:null, user:null, repo:null, branch:null, path:'', file:null, buffer:'' });
   paintRef();
   setBar(null);
@@ -1588,91 +1573,6 @@ window.addEventListener('beforeunload', e => {
 
 
 /* ── BOOT ─────────────────────────────────────────────────── */
-/* ── DEVICE FLOW ──────────────────────────────────────────────────────────
-   GitHub's OAuth endpoints send no CORS headers, so this WebView cannot call
-   them from JavaScript — the request dies before it leaves the page. The HTTP
-   therefore happens natively, in Java, where CORS does not apply. Java calls
-   back into these three globals as the flow progresses.
-   ──────────────────────────────────────────────────────────────────────── */
-
-const canDeviceLogin = !!(window.Native && window.Native.startDeviceLogin);
-
-if (canDeviceLogin) {
-  $('devicebox').style.display = 'block';
-  $('tokenbox').style.display  = 'none';
-}
-
-$('usetoken').onclick = () => {
-  $('devicebox').style.display = 'none';
-  $('tokenbox').style.display  = 'block';
-};
-
-$('devicego').onclick = () => {
-  busy($('devicego'), true, 'Contacting GitHub…');
-  window.Native.startDeviceLogin();
-};
-
-/* Java calls this once GitHub has issued a code. */
-window.onDeviceCode = (code, url) => {
-  busy($('devicego'), false);
-  sheet('Approve this app', `
-    <p class="hint" style="margin:0 0 18px">
-      Enter this code on <b>${url}</b>. Leave this screen open — it will finish
-      by itself.
-    </p>
-
-    <div style="border:1px solid var(--rule-lit); padding:22px 14px; text-align:center;
-                font-size:30px; letter-spacing:.32em; color:var(--pure); margin-bottom:6px;">
-      ${code}
-    </div>
-    <div class="tokmeta" style="justify-content:flex-end">
-      <button type="button" id="d-copy">copy</button>
-    </div>
-
-    <div style="height:14px"></div>
-    <button class="btn solid wide" id="d-open">Open GitHub</button>
-    <div style="height:10px"></div>
-    <button class="btn wide" id="d-cancel">Cancel</button>
-
-    <p class="hint" id="d-status" style="text-align:center; margin-top:18px">Waiting for approval…</p>
-  `, () => {
-    $('d-copy').onclick   = () => { window.Native.copy(code); toast('Code copied.'); };
-    $('d-open').onclick   = () => window.Native.openUrl(url);
-    $('d-cancel').onclick = () => { window.Native.cancelDeviceLogin(); closeSheet(); };
-  });
-};
-
-/* Java calls this when the user approves — or when it gives up. */
-window.onDeviceToken = async (token, refresh) => {
-  closeSheet();
-  S.token = token;
-  try {
-    S.user = await api.me();
-    await store.set(TOKEN_KEY, token);
-    if (refresh) await store.set(REFRESH_KEY, refresh);
-    paintRef();
-    await openRepos();
-  } catch (e) {
-    S.token = null;
-    toast(e.message, 6000);
-  }
-};
-
-/* The refresh token was rejected too — nothing left but to sign in again. */
-window.onRefreshFailed = async () => {
-  await store.del(TOKEN_KEY);
-  await store.del(REFRESH_KEY);
-  show('auth');
-  toast('Your sign-in expired. Please sign in again.', 6000);
-};
-
-window.onDeviceError = (msg) => {
-  busy($('devicego'), false);
-  const st = $('d-status');
-  if (st) st.textContent = msg;
-  else toast(msg, 6000);
-};
-
 function paintBackend(){
   const el = $('backend');
   if (!el) return;
@@ -1699,14 +1599,6 @@ function paintBackend(){
     paintRef();
     await openRepos();
   } catch {
-    // The saved token is dead. If it came from a GitHub App we hold a refresh
-    // token, so renew silently rather than making the user sign in again.
-    const refresh = await store.get(REFRESH_KEY);
-    if (refresh && window.Native && window.Native.refresh) {
-      window.Native.refresh(refresh);   // continues in onDeviceToken / onRefreshFailed
-      return;
-    }
-
     S.token = null;
     await store.del(TOKEN_KEY);
     $('tok').value = '';        // whatever autofill may have put there
