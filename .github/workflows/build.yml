@@ -1,0 +1,71 @@
+name: Build APK
+
+# Builds only when you ask for it:
+#   - the "Run workflow" button in the Actions tab
+#   - pushing a version tag, e.g. v1.0.0
+# Ordinary commits to main do NOT trigger a build.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      # No Gradle wrapper is committed, so the action supplies Gradle.
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      # The keystore lives in a secret, never in the repo. It is written to
+      # disk for the length of the build and shredded afterwards.
+      - name: Restore keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::warning::No KEYSTORE_B64 secret. Building with a debug signature - this APK cannot be updated later."
+          else
+            echo "$KEYSTORE_B64" | base64 -d > app/release.keystore
+          fi
+
+      - name: Build release APK
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: gradle :app:assembleRelease
+
+      - name: Shred keystore
+        if: always()
+        run: shred -u app/release.keystore 2>/dev/null || true
+
+      - name: Name the APK
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/release/app-release.apk "out/gitfile-${GITHUB_RUN_NUMBER}.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gitfile-apk
+          path: out/*.apk
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*.apk
