@@ -8,35 +8,54 @@
 
 <style>
 /* ────────────────────────────────────────────────────────────────
-   DESIGN TOKENS
-   Strictly monochrome. There is no accent colour anywhere in this
-   app — emphasis is carried by INVERSION (white block, black text)
-   and by hairline rules. Same discipline as Reel Diary.
+   GitHub's interface, rebuilt on a black canvas.
+
+   GitHub's own dark theme sits on #0d1117 — a blue-black. This uses true
+   #000000 and pushes every surface a step darker to match, which is why the
+   greys below are not GitHub's greys. The semantic colours ARE GitHub's:
+   blue for links, green for the primary action, red and green in diffs. Those
+   carry meaning, and stripping them would cost the very thing being copied.
    ──────────────────────────────────────────────────────────────── */
 :root{
-  --void:      #000000;  /* page */
-  --panel:     #0A0A0A;  /* cards, rows */
-  --raised:    #161616;  /* inputs, pressed states */
-  --rule:      #262626;  /* hairlines */
-  --rule-lit:  #3D3D3D;  /* hairlines on focus/hover */
-  --dim:       #6E6E6E;  /* metadata, captions */
-  --text:      #E5E5E5;  /* body */
-  --pure:      #FFFFFF;  /* emphasis, inverted surfaces */
+  --canvas:      #000000;   /* page */
+  --inset:       #0A0A0A;   /* the well behind panels */
+  --subtle:      #101216;   /* row hover, code blocks */
+  --overlay:     #14171C;   /* dialogs, menus */
+  --border:      #262B31;   /* every hairline */
+  --border-lit:  #3D444D;   /* hover, focus */
 
-  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "IBM Plex Mono",
-          Menlo, Consolas, "Liberation Mono", monospace;
+  --fg:          #E6EDF3;   /* body text */
+  --fg-muted:    #9198A1;   /* metadata, timestamps */
+  --fg-subtle:   #656C76;   /* the quietest text there is */
 
-  --tap: 44px;           /* minimum touch target */
+  --accent:      #4493F8;   /* links, active tab */
+  --accent-em:   #58A6FF;
+  --green:       #238636;   /* the primary button */
+  --green-hi:    #2EA043;
+  --green-fg:    #3FB950;   /* success dot */
+  --red:         #F85149;   /* danger, failure */
+  --amber:       #D29922;   /* in progress */
+  --tab-mark:    #FD8C73;   /* GitHub's active-tab underline */
+
+  --add-bg:      rgba(46,160,67,.16);
+  --add-fg:      #7EE787;
+  --del-bg:      rgba(248,81,73,.16);
+  --del-fg:      #FFA198;
+
+  --ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  --r: 6px;                 /* GitHub's corner radius, everywhere */
+  --tap: 44px;
 }
 
 *{ box-sizing:border-box; margin:0; padding:0; }
-
 html,body{ height:100%; }
 
 body{
-  background:var(--void);
-  color:var(--text);
-  font-family:var(--mono);
+  background:var(--canvas);
+  color:var(--fg);
+  font-family:var(--ui);
   font-size:14px;
   line-height:1.5;
   -webkit-font-smoothing:antialiased;
@@ -44,473 +63,529 @@ body{
   overscroll-behavior:none;
 }
 
-/* Everything lives in one column, phone-first, capped on desktop. */
-#app{
-  max-width:760px;
-  margin:0 auto;
-  min-height:100%;
-  display:flex;
-  flex-direction:column;
-  border-left:1px solid var(--rule);
-  border-right:1px solid var(--rule);
-}
-@media (max-width:800px){ #app{ border:0; } }
+#app{ max-width:1012px; margin:0 auto; min-height:100%; display:flex; flex-direction:column; }
 
-/* ── Focus: always visible, never coloured ───────────────────── */
-:focus-visible{
-  outline:1px solid var(--pure);
-  outline-offset:2px;
-}
+:focus-visible{ outline:2px solid var(--accent); outline-offset:-1px; border-radius:var(--r); }
 
-/* ── SIGNATURE: the ref line ──────────────────────────────────
-   A persistent strip printing the exact git coordinate you are
-   standing on: owner/repo · branch · path · blob sha. The sha is
-   the real one GitHub returned, and it is the same sha the commit
-   will be checked against. The interface tells you the truth.
-   ───────────────────────────────────────────────────────────── */
+a{ color:var(--accent); text-decoration:none; }
+a:hover{ text-decoration:underline; }
+
+/* ══ Header ══════════════════════════════════════════════════ */
 #refline{
   position:sticky; top:0; z-index:20;
-  background:var(--void);
-  border-bottom:1px solid var(--rule);
-  padding:10px 14px;
-  display:flex; align-items:center; gap:10px;
-  font-size:11.5px; letter-spacing:.02em;
+  background:var(--canvas);
+  border-bottom:1px solid var(--border);
+  padding:12px 16px 0;
 }
-#refline .coord{
-  flex:1; min-width:0;
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-  direction:rtl; text-align:left;   /* keeps the tail (filename) visible */
-}
-#refline .coord span{ direction:ltr; unicode-bidi:embed; }
-#refline .sep{ color:var(--rule-lit); padding:0 2px; }
-#refline .dim{ color:var(--dim); }
-#refline .lit{ color:var(--pure); }
+.hdr{ display:flex; align-items:center; gap:8px; padding-bottom:12px; }
+.hdr .mark{ font-size:16px; flex:none; color:var(--fg); }
+.coord{ flex:1; min-width:0; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.coord .owner{ color:var(--accent); }
+.coord .sep{ color:var(--fg-subtle); padding:0 3px; }
+.coord .repo{ color:var(--accent); font-weight:600; }
+.coord .dim{ color:var(--fg-muted); }
 
-/* the dirty mark — a filled square, no colour needed */
-#dirty{ color:var(--pure); display:none; }
+.pill{
+  display:inline-block; margin-left:6px;
+  border:1px solid var(--border-lit); border-radius:2em;
+  padding:0 7px; font-size:11px; line-height:18px;
+  color:var(--fg-muted); vertical-align:middle;
+}
+
+#dirty{ color:var(--amber); display:none; font-size:11px; }
 #dirty.on{ display:inline; }
-
-#quota{ color:var(--dim); font-size:10.5px; white-space:nowrap; }
+#quota{ color:var(--fg-subtle); font-size:11px; white-space:nowrap; }
 
 #gear{
-  background:none; border:0; padding:0 0 0 10px;
-  color:var(--dim); font-size:14px; line-height:1;
-  flex:none; cursor:pointer;
+  background:none; border:0; padding:4px 0 4px 10px;
+  color:var(--fg-muted); font-size:15px; line-height:1; cursor:pointer; flex:none;
 }
-#gear:hover, #gear:focus-visible{ color:var(--pure); }
+#gear:hover{ color:var(--fg); }
 
-/* ── Desktop view ─────────────────────────────────────────────
-   The viewport meta is switched to a fixed 1024px width, so the WebView lays the
-   page out as a desktop browser would and then scales it down — exactly what
-   "Desktop site" does in Chrome. These rules undo the phone-first constraints so
-   the extra width is actually used.
-   ──────────────────────────────────────────────────────────── */
-body.desktop #app{ max-width:none; border:0; }
-body.desktop main{ padding-bottom:64px; }
-body.desktop #bar{ padding:8px 20px; }
-body.desktop #barwrap{ max-width:none; }
-body.desktop .row{ min-height:34px; padding:6px 20px; }
-body.desktop #refline{ padding:8px 20px; }
-body.desktop .pad, body.desktop h1{ padding-left:20px; padding-right:20px; }
-body.desktop #sheetbox{ max-width:640px; }
+/* ── Tabs. The active one carries GitHub's orange underline. ── */
+.tabs{
+  display:flex; gap:4px;
+  overflow-x:auto; scrollbar-width:none;
+  margin:0 -16px; padding:0 16px;
+}
+.tabs::-webkit-scrollbar{ display:none; }
+.tabs button{
+  background:none; border:0; border-bottom:2px solid transparent;
+  padding:8px 10px 10px; margin-bottom:-1px;
+  color:var(--fg-muted); font:inherit; font-size:13px; white-space:nowrap;
+  cursor:pointer; border-radius:var(--r) var(--r) 0 0;
+}
+.tabs button:hover{ color:var(--fg); background:var(--subtle); }
+.tabs button.on{ color:var(--fg); font-weight:600; border-bottom-color:var(--tab-mark); }
 
-/* ── Views ───────────────────────────────────────────────────── */
-main{ flex:1; padding-bottom:96px; }
+/* ══ Views ═══════════════════════════════════════════════════ */
+main{ flex:1; padding:16px; padding-bottom:96px; }
 .view{ display:none; }
 .view.on{ display:block; }
-
-.pad{ padding:20px 14px; }
+.pad{ padding:0 0 16px; }
 
 h1{
-  font-size:13px; font-weight:400; letter-spacing:.22em;
-  text-transform:uppercase; color:var(--dim);
-  padding:22px 14px 10px;
+  font-size:12px; font-weight:600; color:var(--fg-muted);
+  padding:0 0 12px; letter-spacing:0; text-transform:none;
 }
 
-/* ── Rows (repo list, file tree) ─────────────────────────────── */
-/* A row is a wrapper: the body opens the thing, the ⋯ opens its menu. */
-.row{ display:flex; align-items:stretch; border-bottom:1px solid var(--rule); }
+/* ══ The file table ══════════════════════════════════════════
+   GitHub's central object: a bordered card, a commit bar across the top, then
+   one row per entry.
+   ══════════════════════════════════════════════════════════ */
+.filebox{
+  border:1px solid var(--border);
+  border-radius:var(--r);
+  overflow:hidden;
+  margin-bottom:16px;
+}
 
+.commitbar{
+  display:flex; align-items:center; gap:8px;
+  background:var(--inset);
+  border-bottom:1px solid var(--border);
+  padding:10px 16px;
+  font-size:12px; color:var(--fg-muted);
+  min-height:44px;
+}
+.commitbar .who{ color:var(--fg); font-weight:600; flex:none; }
+.commitbar .msg{
+  flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  color:var(--fg-muted);
+}
+.commitbar .when{ flex:none; font-family:var(--mono); font-size:11px; }
+
+.row{
+  display:flex; align-items:center; gap:12px;
+  width:100%; min-height:var(--tap);
+  padding:8px 16px;
+  background:transparent; border:0; border-top:1px solid var(--border);
+  color:var(--fg); font:inherit; font-size:14px; text-align:left; cursor:pointer;
+}
+.filebox .row:first-child{ border-top:0; }
+.row:hover{ background:var(--subtle); }
+.row .glyph{ color:var(--fg-muted); width:16px; flex:none; font-size:13px; text-align:center; }
+.row.dir .glyph{ color:var(--accent); }
+.row .name{
+  flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  color:var(--fg);
+}
+.row:hover .name{ color:var(--accent); text-decoration:underline; }
+.row .meta{ color:var(--fg-muted); font-size:12px; flex:none; font-family:var(--mono); }
+
+/* A tree row: the whole name is one button, with a ⋯ menu beside it. */
+.row{ padding:0; align-items:stretch; }
 .rowmain{
   display:flex; align-items:center; gap:12px;
-  flex:1; min-width:0; min-height:var(--tap);
-  padding:12px 14px;
-  background:transparent; border:0;
-  color:var(--text); font:inherit; text-align:left; cursor:pointer;
+  flex:1; min-width:0;
+  padding:8px 4px 8px 16px;
+  background:none; border:0; color:var(--fg); font:inherit; font-size:14px; text-align:left;
 }
-.rowmain:hover, .rowmain:focus-visible{ background:var(--panel); }
-.rowmain:active{ background:var(--raised); }
-.rowmain .glyph{ color:var(--dim); width:14px; flex:none; }
-.rowmain .name{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.rowmain .meta{ color:var(--dim); font-size:11px; flex:none; }
-.row.dir .name{ color:var(--pure); }
-
 .rowmenu{
-  flex:none; width:var(--tap);
-  background:transparent; border:0; border-left:1px solid var(--rule);
-  color:var(--dim); font:inherit; cursor:pointer;
+  flex:none; width:40px;
+  background:none; border:0;
+  color:var(--fg-subtle); font-size:16px; line-height:1;
+  border-radius:var(--r);
 }
-.rowmenu:hover, .rowmenu:focus-visible{ background:var(--panel); color:var(--pure); }
+.rowmenu:hover{ color:var(--fg); background:var(--overlay); }
 
-/* Inverted tag — the only place a filled white block appears in a list. */
-.tag{
-  flex:none; font-size:9.5px; letter-spacing:.12em; text-transform:uppercase;
-  color:var(--void); background:var(--pure); padding:2px 6px;
-}
-
-/* A stack of choices inside a sheet. */
-.sheetlist{ display:flex; flex-direction:column; margin-bottom:20px; }
-.sheetlist button{
-  min-height:var(--tap); padding:12px 0;
-  background:transparent; border:0; border-bottom:1px solid var(--rule);
-  color:var(--text); font:inherit; text-align:left; cursor:pointer;
-}
-.sheetlist button:hover, .sheetlist button:focus-visible{ color:var(--pure); }
-.sheetlist button small{ display:block; color:var(--dim); font-size:11px; margin-top:3px; line-height:1.5; }
-
-/* ── Buttons ─────────────────────────────────────────────────── */
+/* ══ Buttons ═════════════════════════════════════════════════ */
 button{ font:inherit; cursor:pointer; }
 
 .btn{
-  min-height:var(--tap); padding:0 16px;
-  background:transparent; color:var(--text);
-  border:1px solid var(--rule);
-  letter-spacing:.04em;
+  display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  min-height:32px; padding:5px 16px;
+  background:var(--overlay); color:var(--fg);
+  border:1px solid var(--border-lit); border-radius:var(--r);
+  font-size:14px; font-weight:500;
 }
-.btn:hover, .btn:focus-visible{ border-color:var(--pure); color:var(--pure); }
-.btn:disabled{ opacity:.35; cursor:not-allowed; border-color:var(--rule); color:var(--text); }
+.btn:hover{ background:var(--subtle); border-color:var(--fg-subtle); }
+.btn:active{ background:var(--inset); }
+.btn:disabled{ opacity:.5; cursor:not-allowed; }
 
-/* inverted = the only "loud" surface in the app */
-.btn.solid{ background:var(--pure); color:var(--void); border-color:var(--pure); font-weight:600; }
-.btn.solid:hover:not(:disabled){ background:var(--text); }
-.btn.solid:disabled{ background:var(--raised); color:var(--dim); border-color:var(--rule); }
+/* The green one. GitHub uses it for exactly one action per screen. */
+.btn.solid{
+  background:var(--green); color:#fff;
+  border-color:rgba(255,255,255,.1); font-weight:600;
+}
+.btn.solid:hover:not(:disabled){ background:var(--green-hi); }
+.btn.solid:disabled{ background:var(--green); opacity:.5; }
+
+.btn.danger{ color:var(--red); }
+.btn.danger:hover{ background:var(--red); color:#fff; border-color:var(--red); }
 
 .btn.wide{ width:100%; }
+.btn.small{ min-height:28px; padding:3px 12px; font-size:12px; }
 
-/* ── Inputs ──────────────────────────────────────────────────── */
-label{ display:block; font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--dim); margin-bottom:8px; }
-
-input[type=text], input[type=password], textarea, select{
-  width:100%; padding:12px;
-  background:var(--raised); color:var(--text);
-  border:1px solid var(--rule);
-  font:inherit; border-radius:0;
+/* ══ The repo toolbar: branch picker, then actions ════════════ */
+.branchpick{
+  display:flex; align-items:center; gap:8px;
+  margin-bottom:16px;
+}
+.branchpick select{
+  flex:0 1 auto; min-width:0; max-width:55%;
+  min-height:32px; padding:5px 10px;
+  background:var(--overlay); color:var(--fg);
+  border:1px solid var(--border-lit); border-radius:var(--r);
+  font-size:13px; font-weight:500;
   -webkit-appearance:none; appearance:none;
 }
-input:focus, textarea:focus, select:focus{ outline:none; border-color:var(--pure); }
-::placeholder{ color:var(--dim); }
+.branchpick select:focus{ outline:none; border-color:var(--accent); }
+.branchpick .btn{ flex:none; }
+.branchpick .spacer{ flex:1; }
 
-.field{ margin-bottom:20px; }
-
-/* Masking via CSS rather than type=password. A password input invites Android's
-   autofill to drop a saved credential into it, which then gets sent to GitHub
-   as if it were your token — the source of a very confusing 401. */
-input.masked{ -webkit-text-security:disc; text-security:disc; letter-spacing:.08em; }
-input.masked.plain{ -webkit-text-security:none; text-security:none; letter-spacing:0; }
-
-.tokmeta{
-  display:flex; justify-content:space-between; align-items:center;
-  margin-top:8px; font-size:11px; color:var(--dim);
+/* ══ Breadcrumbs ═════════════════════════════════════════════ */
+.crumbs{
+  display:flex; flex-wrap:wrap; align-items:center; gap:2px;
+  font-size:16px; margin-bottom:16px;
 }
-/* ── Checkbox, drawn by hand ──────────────────────────────────
-   An unchecked hairline square; checked, it inverts to a solid white block with
-   a black tick — the same inversion the rest of the app uses for emphasis.
-   ──────────────────────────────────────────────────────────── */
+.crumbs button{
+  background:none; border:0; color:var(--accent); font:inherit; font-size:16px; padding:2px;
+}
+.crumbs button:hover{ text-decoration:underline; }
+.crumbs .now{ color:var(--fg); font-weight:600; padding:2px; }
+.crumbs .slash{ color:var(--fg-subtle); }
+
+/* ══ Inputs ══════════════════════════════════════════════════ */
+label{
+  display:block; font-size:14px; font-weight:600; color:var(--fg);
+  margin-bottom:6px; letter-spacing:0; text-transform:none;
+}
+input[type=text], input[type=password], textarea, select{
+  width:100%; padding:6px 12px; min-height:32px;
+  background:var(--canvas); color:var(--fg);
+  border:1px solid var(--border-lit); border-radius:var(--r);
+  font:inherit; font-size:14px;
+  -webkit-appearance:none; appearance:none;
+}
+input:focus, textarea:focus, select:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+::placeholder{ color:var(--fg-subtle); }
+
+.field{ margin-bottom:16px; }
+.hint{ font-size:12px; color:var(--fg-muted); margin-top:6px; line-height:1.5; }
+.hint a{ color:var(--accent); }
+.hint b{ color:var(--fg); font-weight:600; }
+
+input.masked{ -webkit-text-security:disc; font-family:var(--mono); letter-spacing:.05em; }
+input.masked.plain{ -webkit-text-security:none; letter-spacing:0; }
+
+.tokmeta{ display:flex; justify-content:space-between; align-items:center; margin-top:6px; font-size:12px; color:var(--fg-muted); }
+.tokmeta button{ background:none; border:0; color:var(--accent); font:inherit; padding:4px; }
+
+/* ── Checkbox, hand-drawn. The native control's tick is invisible on
+      a white accent in Android's WebView. ── */
 .check{
-  display:flex; align-items:center; gap:12px;
-  min-height:var(--tap);
-  font-size:12px; color:var(--text);
-  text-transform:none; letter-spacing:0;
-  cursor:pointer; margin-bottom:0;
+  display:flex; align-items:center; gap:8px; min-height:var(--tap);
+  font-size:14px; font-weight:400; color:var(--fg); cursor:pointer; margin-bottom:0;
 }
-.check input{
-  position:absolute; opacity:0;   /* still focusable, still keyboard-toggleable */
-  width:0; height:0;
-}
+.check input{ position:absolute; opacity:0; width:0; height:0; }
 .check .box{
-  width:18px; height:18px; flex:none;
-  border:1px solid var(--rule-lit);
-  display:grid; place-items:center;
+  width:16px; height:16px; flex:none;
+  border:1px solid var(--border-lit); border-radius:3px;
+  display:grid; place-items:center; background:var(--canvas);
 }
-.check input:checked + .box{
-  background:var(--pure);
-  border-color:var(--pure);
-}
-.check input:checked + .box::after{
-  content:'\2713';                 /* ✓ */
-  color:var(--void);
-  font-size:12px; line-height:1; font-weight:700;
-}
-.check input:focus-visible + .box{ outline:1px solid var(--pure); outline-offset:2px; }
+.check input:checked + .box{ background:var(--accent); border-color:var(--accent); }
+.check input:checked + .box::after{ content:'\2713'; color:#fff; font-size:11px; font-weight:700; line-height:1; }
+.check input:focus-visible + .box{ box-shadow:0 0 0 2px var(--accent); }
 
-/* ── Progress ─────────────────────────────────────────────────
-   A hairline trough that fills with solid white. Determinate, because we know
-   exactly how many files there are — a spinner would be pretending otherwise.
-   ──────────────────────────────────────────────────────────── */
-.bar{
-  height:2px; background:var(--raised);
-  border:0; margin:18px 0 10px;
-  overflow:hidden;
-}
-.bar > i{
-  display:block; height:100%; width:0;
-  background:var(--pure);
-  transition:width .18s linear;
-}
-@media (prefers-reduced-motion:reduce){ .bar > i{ transition:none; } }
-
-.barstat{
-  display:flex; justify-content:space-between; gap:12px;
-  font-size:11px; color:var(--dim);
-}
-.barstat .now{
-  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-  direction:rtl; text-align:left;      /* keep the filename end visible */
-}
-
-/* ── The editable path bar ────────────────────────────────── */
+/* ══ File view ═══════════════════════════════════════════════ */
 .pathbar{
-  display:flex; align-items:center; gap:0;
-  border-bottom:1px solid var(--rule);
-  padding:0 14px;
+  display:flex; align-items:center;
+  background:var(--inset);
+  border:1px solid var(--border); border-bottom:0;
+  border-radius:var(--r) var(--r) 0 0;
+  padding:0 12px;
 }
-.pathbar .dim{ color:var(--dim); font-size:12px; flex:none; }
+.pathbar .dim{ color:var(--fg-muted); font-size:14px; flex:none; }
 .pathbar input{
-  flex:1; min-width:0;
-  background:transparent; border:0; padding:12px 0;
-  color:var(--pure); font-size:12px;
+  flex:1; min-width:0; background:transparent; border:0; box-shadow:none;
+  padding:10px 0; color:var(--fg); font-size:14px; font-weight:600;
 }
-.pathbar input:focus{ outline:none; }
-.pathbar input.moved{ text-decoration:underline; text-decoration-color:var(--pure); text-underline-offset:4px; }
-
-/* ── Diff ─────────────────────────────────────────────────────
-   No red and green — the app has no colour. Added lines are white on a lit
-   rule, removed lines are dimmed and struck through the gutter mark.
-   ──────────────────────────────────────────────────────────── */
-.diff{
-  border:1px solid var(--rule);
-  max-height:44vh; overflow:auto;
-  font-size:11.5px; line-height:1.6;
-  margin-bottom:20px;
-  white-space:pre;
-}
-.diff div{ padding:1px 10px 1px 24px; position:relative; }
-.diff .add{ color:var(--pure); background:var(--raised); }
-.diff .del{ color:var(--dim); }
-.diff .add::before,
-.diff .del::before,
-.diff .ctx::before{
-  position:absolute; left:8px; color:var(--dim);
-}
-.diff .add::before{ content:'+'; color:var(--pure); }
-.diff .del::before{ content:'\2212'; }   /* − */
-.diff .ctx{ color:var(--dim); opacity:.55; }
-.diff .gap{
-  color:var(--rule-lit); text-align:center; padding:4px 0;
-  border-top:1px solid var(--rule); border-bottom:1px solid var(--rule);
-}
-.diffstat{ font-size:11px; color:var(--dim); margin-bottom:10px; }
-
-/* ── Rendered markdown ────────────────────────────────────── */
-.md{ padding:20px 14px; font-family:system-ui, -apple-system, sans-serif; line-height:1.65; }
-.md h1,.md h2,.md h3{ font-weight:600; color:var(--pure); margin:22px 0 10px; line-height:1.3; }
-.md h1{ font-size:22px; border-bottom:1px solid var(--rule); padding-bottom:8px; }
-.md h2{ font-size:18px; border-bottom:1px solid var(--rule); padding-bottom:6px; }
-.md h3{ font-size:15px; }
-.md p{ margin:0 0 14px; }
-.md ul,.md ol{ margin:0 0 14px; padding-left:22px; }
-.md li{ margin-bottom:5px; }
-.md code{ font-family:var(--mono); font-size:12px; background:var(--raised); padding:2px 5px; }
-.md pre{ background:var(--panel); border:1px solid var(--rule); padding:12px; overflow-x:auto; margin:0 0 14px; }
-.md pre code{ background:none; padding:0; }
-.md blockquote{ border-left:2px solid var(--rule-lit); padding-left:12px; color:var(--dim); margin:0 0 14px; }
-.md a{ color:var(--pure); }
-.md hr{ border:0; border-top:1px solid var(--rule); margin:20px 0; }
-.md img{ max-width:100%; }
-.md table{ border-collapse:collapse; margin-bottom:14px; font-size:12px; }
-.md th,.md td{ border:1px solid var(--rule); padding:6px 10px; text-align:left; }
-
-/* ── Image preview ────────────────────────────────────────── */
-#imgview{ padding:24px 14px; text-align:center; }
-#imgview img{
-  max-width:100%;
-  /* a chequerboard, in greys, so transparency is visible */
-  background:
-    repeating-conic-gradient(var(--raised) 0% 25%, var(--panel) 0% 50%) 50% / 16px 16px;
-}
-#imgview .meta{ margin-top:14px; font-size:11px; color:var(--dim); }
-
-/* ── Status glyphs for Actions runs ───────────────────────── */
-.run-ok::before   { content:'\25CF'; color:var(--pure); }   /* ● */
-.run-bad::before  { content:'\2715'; color:var(--pure); }   /* ✕ */
-.run-wait::before { content:'\25CB'; color:var(--dim);  }   /* ○ */
-
-.tokmeta button{
-  background:none; border:0; color:var(--text); font:inherit; padding:4px;
-  text-decoration:underline; text-underline-offset:3px; text-decoration-color:var(--rule-lit);
-}
-.hint{ font-size:11px; color:var(--dim); margin-top:8px; line-height:1.6; }
-.hint a{ color:var(--text); }
-
-/* ── Editor ──────────────────────────────────────────────────── */
-/* ── The editor: two stacked layers ───────────────────────────
-   Every one of these properties must be identical on both, or the highlighted
-   text drifts out from under the characters you are typing.
-   ──────────────────────────────────────────────────────────── */
-#edwrap{
-  position:relative;
-  min-height:52vh;
-  border-top:1px solid var(--rule);
-  border-bottom:1px solid var(--rule);
-  background:var(--void);
-}
-
-#editor, #hl{
-  margin:0;
-  padding:14px;
-  border:0;
-  font-family:var(--mono);
-  font-size:13px;
-  line-height:1.65;
-  letter-spacing:normal;
-  white-space:pre;
-  overflow-wrap:normal;
-  tab-size:2;
-  box-sizing:border-box;
-}
-
-#hl{
-  position:absolute; inset:0;
-  overflow:hidden;                /* scrolled programmatically, in step */
-  pointer-events:none;
-  color:var(--text);
-  background:var(--void);
-}
-#hl code{ font:inherit; }
-
-#editor{
-  position:relative;              /* sits on top of #hl */
-  width:100%; height:100%;
-  min-height:52vh;
-  overflow:auto;
-  resize:none;
-  background:transparent;
-  color:transparent;              /* the <pre> underneath is what you see */
-  caret-color:var(--pure);
-  -webkit-text-fill-color:transparent;
-}
-#editor::selection{ background:var(--rule-lit); -webkit-text-fill-color:var(--pure); }
-#editor:focus{ outline:none; }
-
-/* When the file cannot be highlighted, fall back to plain readable text. */
-#editor.plain{ color:var(--text); -webkit-text-fill-color:var(--text); }
-#editor.plain + #hl, #hl.off{ display:none; }
-#editor[readonly]{ caret-color:transparent; }
-
-/* ── Tokens ───────────────────────────────────────────────────
-   The app has no colour, so the scale is grey plus weight. It reads as
-   hierarchy rather than decoration, which is what highlighting is for anyway.
-   ──────────────────────────────────────────────────────────── */
-.t-key { color:#FFFFFF; font-weight:600; }
-.t-str { color:#B4B4B4; }
-.t-num { color:#FFFFFF; }
-.t-com { color:#5A5A5A; font-style:italic; }
-.t-fn  { color:#FFFFFF; }
-.t-pun { color:#7A7A7A; }
-.t-tag { color:#FFFFFF; font-weight:600; }
-.t-att { color:#B4B4B4; }
+.pathbar input:focus{ outline:none; box-shadow:none; }
+.pathbar input.moved{ color:var(--amber); }
 
 #editstat{
-  display:flex; gap:16px;
-  padding:8px 14px;
-  font-size:11px; color:var(--dim);
-  border-bottom:1px solid var(--rule);
+  display:flex; gap:16px; align-items:center;
+  background:var(--inset);
+  border:1px solid var(--border); border-bottom:0;
+  padding:8px 12px;
+  font-size:12px; color:var(--fg-muted); font-family:var(--mono);
+}
+#editstat #stat-state{ margin-left:auto; }
+
+/* ── Editor: the highlight layer sits under a transparent textarea.
+      Every metric below must match on both, or the text drifts. ── */
+#edwrap{
+  position:relative; min-height:52vh;
+  border:1px solid var(--border);
+  border-radius:0 0 var(--r) var(--r);
+  background:var(--canvas);
+  overflow:hidden;
+}
+#editor, #hl{
+  margin:0; padding:12px 12px 12px 52px;   /* room for the line-number gutter */
+  border:0; box-shadow:none;
+  font-family:var(--mono); font-size:12px; line-height:20px;
+  white-space:pre; overflow-wrap:normal; tab-size:2;
+  box-sizing:border-box;
+}
+#hl{
+  position:absolute; inset:0; overflow:hidden; pointer-events:none;
+  color:var(--fg); background:transparent;
+}
+#hl code{ font:inherit; }
+#editor{
+  position:relative; width:100%; height:100%; min-height:52vh;
+  overflow:auto; resize:none;
+  background:transparent; color:transparent;
+  caret-color:var(--fg); -webkit-text-fill-color:transparent;
+}
+#editor::selection{ background:rgba(68,147,248,.35); -webkit-text-fill-color:var(--fg); }
+#editor:focus{ outline:none; box-shadow:none; }
+#editor.plain{ color:var(--fg); -webkit-text-fill-color:var(--fg); }
+#editor.plain + #hl, #hl.off{ display:none; }
+
+/* line numbers */
+#gut{
+  position:absolute; top:0; left:0; bottom:0; width:44px;
+  padding:12px 8px 12px 0;
+  font-family:var(--mono); font-size:12px; line-height:20px;
+  color:var(--fg-subtle); text-align:right;
+  background:var(--canvas);
+  border-right:1px solid var(--border);
+  overflow:hidden; pointer-events:none;
+  z-index:2;
 }
 
-/* ── Bottom action bar: fixed, thumb-reachable ───────────────── */
+/* ── Tokens: GitHub's own syntax palette ── */
+.t-key { color:#FF7B72; }   /* keyword    */
+.t-str { color:#A5D6FF; }   /* string     */
+.t-num { color:#79C0FF; }   /* number     */
+.t-com { color:#8B949E; }   /* comment    */
+.t-fn  { color:#D2A8FF; }   /* call site  */
+.t-pun { color:#C9D1D9; }   /* punctuation*/
+.t-tag { color:#7EE787; }   /* markup tag */
+.t-att { color:#79C0FF; }   /* attribute  */
+
+/* ══ Diff ════════════════════════════════════════════════════ */
+.diff{
+  border:1px solid var(--border); border-radius:var(--r);
+  max-height:40vh; overflow:auto;
+  font-family:var(--mono); font-size:12px; line-height:20px;
+  margin-bottom:16px; white-space:pre;
+}
+.diff div{ padding:0 10px 0 22px; position:relative; }
+.diff .add{ background:var(--add-bg); color:var(--add-fg); }
+.diff .del{ background:var(--del-bg); color:var(--del-fg); }
+.diff .ctx{ color:var(--fg-muted); }
+.diff .add::before{ content:'+'; position:absolute; left:8px; color:var(--add-fg); }
+.diff .del::before{ content:'\2212'; position:absolute; left:8px; color:var(--del-fg); }
+.diff .gap{ color:var(--fg-subtle); background:var(--inset); text-align:center; padding:2px 0; }
+.diffstat{ font-size:12px; color:var(--fg-muted); margin-bottom:8px; }
+.diffstat .a{ color:var(--add-fg); font-weight:600; }
+.diffstat .d{ color:var(--del-fg); font-weight:600; }
+
+/* ══ Markdown, as GitHub renders it ══════════════════════════ */
+.md{ padding:16px; font-size:15px; line-height:1.6; }
+.readme{ border:1px solid var(--border); border-radius:var(--r); }
+.readme .rhead{
+  display:flex; align-items:center; gap:8px;
+  padding:12px 16px; border-bottom:1px solid var(--border);
+  font-size:13px; font-weight:600; color:var(--fg);
+}
+.md h1,.md h2,.md h3{ font-weight:600; color:var(--fg); margin:24px 0 16px; line-height:1.25; }
+.md h1{ font-size:26px; border-bottom:1px solid var(--border); padding-bottom:8px; }
+.md h2{ font-size:20px; border-bottom:1px solid var(--border); padding-bottom:8px; }
+.md h3{ font-size:16px; }
+.md > :first-child{ margin-top:0; }
+.md p{ margin:0 0 16px; }
+.md ul,.md ol{ margin:0 0 16px; padding-left:24px; }
+.md li{ margin-bottom:4px; }
+.md code{ font-family:var(--mono); font-size:85%; background:var(--subtle); padding:.2em .4em; border-radius:var(--r); }
+.md pre{ background:var(--subtle); border-radius:var(--r); padding:16px; overflow-x:auto; margin:0 0 16px; }
+.md pre code{ background:none; padding:0; font-size:12px; }
+.md blockquote{ border-left:.25em solid var(--border-lit); padding:0 1em; color:var(--fg-muted); margin:0 0 16px; }
+.md hr{ border:0; border-top:1px solid var(--border); margin:24px 0; }
+.md img{ max-width:100%; }
+.md table{ border-collapse:collapse; margin-bottom:16px; font-size:14px; display:block; overflow-x:auto; }
+.md th,.md td{ border:1px solid var(--border); padding:6px 13px; }
+.md tr:nth-child(2n){ background:var(--inset); }
+
+/* ══ Image preview ═══════════════════════════════════════════ */
+#imgview{
+  padding:32px 16px; text-align:center;
+  border:1px solid var(--border); border-radius:0 0 var(--r) var(--r);
+}
+#imgview img{
+  max-width:100%;
+  background:repeating-conic-gradient(var(--subtle) 0% 25%, var(--inset) 0% 50%) 50% / 16px 16px;
+  border:1px solid var(--border);
+}
+#imgview .meta{ margin-top:12px; font-size:12px; color:var(--fg-muted); font-family:var(--mono); }
+
+/* ══ A live run ══════════════════════════════════════════════ */
+.runhead{
+  border:1px solid var(--border); border-radius:var(--r);
+  padding:16px; margin-bottom:16px;
+}
+.runhead .title{ font-size:16px; font-weight:600; color:var(--fg); margin-bottom:4px; }
+.runhead .sub{ font-size:12px; color:var(--fg-muted); font-family:var(--mono); }
+.runhead .state{ font-size:13px; font-weight:600; margin-top:10px; }
+.runhead .state.ok  { color:var(--green-fg); }
+.runhead .state.bad { color:var(--red); }
+.runhead .state.wait{ color:var(--amber); }
+
+.jobbox{ border:1px solid var(--border); border-radius:var(--r); margin-bottom:16px; overflow:hidden; }
+.jobbox .jhead{
+  display:flex; align-items:center; gap:8px;
+  background:var(--inset); border-bottom:1px solid var(--border);
+  padding:10px 16px; font-size:13px; font-weight:600;
+}
+.jobbox .jhead .when{ margin-left:auto; font-family:var(--mono); font-size:11px; color:var(--fg-muted); font-weight:400; }
+
+.step{
+  display:flex; align-items:center; gap:10px;
+  padding:8px 16px; border-top:1px solid var(--border);
+  font-size:13px; color:var(--fg-muted);
+}
+.step:first-child{ border-top:0; }
+.step .g{ width:16px; flex:none; text-align:center; font-size:11px; }
+.step .n{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.step .t{ font-family:var(--mono); font-size:11px; color:var(--fg-subtle); flex:none; }
+
+.step.done  { color:var(--fg); }
+.step.done  .g{ color:var(--green-fg); }
+.step.fail  { color:var(--fg); }
+.step.fail  .g{ color:var(--red); }
+.step.skip  .g{ color:var(--fg-subtle); }
+.step.queue .g{ color:var(--fg-subtle); }
+
+/* The step currently executing. A slow pulse, because something IS happening —
+   but nothing spins, because we cannot know how far through it is. */
+.step.live{ color:var(--fg); background:var(--inset); }
+.step.live .g{ color:var(--amber); animation:pulse 1.4s ease-in-out infinite; }
+@keyframes pulse{ 0%,100%{ opacity:1 } 50%{ opacity:.25 } }
+@media (prefers-reduced-motion:reduce){ .step.live .g{ animation:none; } }
+
+/* ══ Artifacts ═══════════════════════════════════════════════ */
+.artbox{ border:1px solid var(--green-fg); border-radius:var(--r); overflow:hidden; margin-bottom:16px; }
+.artbox .ahead{
+  background:rgba(46,160,67,.12); border-bottom:1px solid var(--border);
+  padding:10px 16px; font-size:13px; font-weight:600; color:var(--green-fg);
+}
+.art{
+  display:flex; align-items:center; gap:12px;
+  padding:12px 16px; border-top:1px solid var(--border);
+  width:100%; background:none; border-left:0; border-right:0; border-bottom:0;
+  color:var(--fg); font:inherit; text-align:left;
+}
+.art:first-of-type{ border-top:0; }
+.art:hover{ background:var(--subtle); }
+.art .g{ flex:none; color:var(--fg-muted); }
+.art .n{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
+.art .s{ flex:none; font-family:var(--mono); font-size:12px; color:var(--fg-muted); }
+
+/* ══ Status glyphs ═══════════════════════════════════════════ */
+.run-ok::before   { content:'\25CF'; color:var(--green-fg); }
+.run-bad::before  { content:'\2715'; color:var(--red); }
+.run-wait::before { content:'\25CB'; color:var(--amber); }
+
+/* ══ Bottom bar ══════════════════════════════════════════════ */
 #bar{
   position:fixed; bottom:0; left:0; right:0; z-index:30;
-  background:var(--void);
-  border-top:1px solid var(--rule);
-  padding:10px 14px calc(10px + env(safe-area-inset-bottom));
-  display:none; gap:10px;
+  background:var(--canvas);
+  border-top:1px solid var(--border);
+  padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+  display:none;
 }
-#bar.on{ display:flex; }
-#bar > *{ flex:1; }
+#bar.on{ display:block; }
+#barwrap{ max-width:1012px; margin:0 auto; display:flex; gap:8px; width:100%; }
+#bar .btn{ flex:1; }
 #bar .grow2{ flex:2; }
-#barwrap{ max-width:760px; margin:0 auto; display:flex; gap:10px; width:100%; }
 
-/* ── Sheet (commit / new branch / new PR / new file) ──────────── */
+/* ══ Dialogs ═════════════════════════════════════════════════ */
 #sheet{
   position:fixed; inset:0; z-index:40;
-  background:rgba(0,0,0,.75);
-  display:none;
-  align-items:flex-end; justify-content:center;
+  background:rgba(1,4,9,.8);
+  display:none; align-items:flex-end; justify-content:center;
 }
 #sheet.on{ display:flex; }
 #sheetbox{
-  width:100%; max-width:760px;
-  background:var(--void);
-  border-top:1px solid var(--pure);
-  padding:20px 14px calc(20px + env(safe-area-inset-bottom));
+  width:100%; max-width:480px;
+  background:var(--overlay);
+  border:1px solid var(--border-lit);
+  border-radius:12px 12px 0 0;
+  padding:16px 16px calc(16px + env(safe-area-inset-bottom));
   max-height:88vh; overflow-y:auto;
-  animation:rise .18s ease-out;
+  animation:rise .16s ease-out;
 }
-@keyframes rise{ from{ transform:translateY(14px); opacity:0; } to{ transform:none; opacity:1; } }
+@keyframes rise{ from{ transform:translateY(12px); opacity:0; } to{ transform:none; opacity:1; } }
 @media (prefers-reduced-motion:reduce){ #sheetbox{ animation:none; } }
 
 #sheettitle{
-  font-size:11px; letter-spacing:.22em; text-transform:uppercase;
-  color:var(--dim); margin-bottom:18px;
+  font-size:14px; font-weight:600; color:var(--fg);
+  padding-bottom:12px; margin-bottom:16px;
+  border-bottom:1px solid var(--border);
+  letter-spacing:0; text-transform:none;
 }
 
-/* the "you are overwriting this blob" line inside the commit sheet */
+/* The context strip inside a dialog: what you are about to act on. */
 .overwrite{
-  border-left:1px solid var(--rule-lit);
-  padding:8px 0 8px 12px; margin-bottom:20px;
-  font-size:11px; color:var(--dim); line-height:1.7;
+  background:var(--inset); border:1px solid var(--border); border-radius:var(--r);
+  padding:10px 12px; margin-bottom:16px;
+  font-size:12px; color:var(--fg-muted); line-height:1.7;
+  font-family:var(--mono);
 }
-.overwrite b{ color:var(--text); font-weight:400; }
+.overwrite b{ color:var(--fg); font-weight:600; }
 
-/* ── Toast / error ───────────────────────────────────────────── */
+.sheetlist{ display:flex; flex-direction:column; gap:0; margin-bottom:16px; }
+.sheetlist button{
+  display:block; width:100%; text-align:left;
+  background:none; border:0; border-bottom:1px solid var(--border);
+  padding:12px 4px; min-height:var(--tap);
+  color:var(--fg); font:inherit; font-size:14px; font-weight:500;
+}
+.sheetlist button:last-child{ border-bottom:0; }
+.sheetlist button:hover{ color:var(--accent); }
+.sheetlist button small{ display:block; color:var(--fg-muted); font-size:12px; font-weight:400; margin-top:2px; }
+.sheetlist button.danger{ color:var(--red); }
+
+/* ══ Progress ════════════════════════════════════════════════ */
+.bar{ height:4px; background:var(--subtle); border-radius:3px; margin:16px 0 8px; overflow:hidden; }
+.bar > i{ display:block; height:100%; width:0; background:var(--green-fg); transition:width .18s linear; }
+@media (prefers-reduced-motion:reduce){ .bar > i{ transition:none; } }
+.barstat{ display:flex; justify-content:space-between; gap:12px; font-size:12px; color:var(--fg-muted); }
+.barstat .now{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left; }
+
+/* ══ Toast ═══════════════════════════════════════════════════ */
 #toast{
   position:fixed; left:0; right:0; bottom:0; z-index:50;
   display:none; justify-content:center;
-  padding:0 0 calc(96px + env(safe-area-inset-bottom));
+  padding:0 0 calc(88px + env(safe-area-inset-bottom));
   pointer-events:none;
 }
 #toast.on{ display:flex; }
 #toastbox{
-  max-width:calc(760px - 28px); margin:0 14px;
-  background:var(--raised);
-  border:1px solid var(--rule-lit);
-  border-left:2px solid var(--pure);
-  padding:12px 14px;
-  font-size:12px; line-height:1.6;
+  max-width:calc(1012px - 32px); margin:0 16px;
+  background:var(--overlay);
+  border:1px solid var(--border-lit); border-radius:var(--r);
+  box-shadow:0 8px 24px rgba(0,0,0,.6);
+  padding:12px 14px; font-size:13px; line-height:1.5;
   pointer-events:auto;
 }
 
-/* ── Misc ────────────────────────────────────────────────────── */
-.empty{ padding:56px 14px; text-align:center; color:var(--dim); font-size:12px; line-height:1.8; }
-.spin{ display:inline-block; }         /* text-based spinner, no SVG */
-.crumbs{
-  padding:12px 14px; border-bottom:1px solid var(--rule);
-  font-size:11.5px; color:var(--dim);
-  display:flex; flex-wrap:wrap; align-items:center; gap:2px;
+/* ══ Empty states ════════════════════════════════════════════ */
+.empty{
+  padding:48px 16px; text-align:center;
+  color:var(--fg-muted); font-size:14px; line-height:1.7;
+  border:1px dashed var(--border); border-radius:var(--r);
 }
-.crumbs button{
-  background:none; border:0; color:var(--text); font:inherit; padding:4px 2px;
-  text-decoration:underline; text-underline-offset:3px; text-decoration-color:var(--rule-lit);
-}
-.crumbs button:hover{ color:var(--pure); }
-.crumbs .now{ color:var(--pure); padding:4px 2px; }
 
-.branchpick{
-  display:flex; align-items:center; gap:10px;
-  padding:10px 14px; border-bottom:1px solid var(--rule);
-}
-.branchpick select{ flex:1; padding:8px 10px; font-size:12px; }
-.branchpick .btn{ min-height:36px; padding:0 12px; font-size:12px; flex:none; }
+/* ══ Desktop view ════════════════════════════════════════════ */
+body.desktop #app{ max-width:none; }
+body.desktop main{ padding:24px 32px 96px; }
+body.desktop .row{ min-height:36px; padding:6px 16px; }
+
 </style>
 </head>
 
@@ -519,10 +594,14 @@ input.masked.plain{ -webkit-text-security:none; text-security:none; letter-spaci
 
   <!-- ── SIGNATURE ELEMENT: the ref line ───────────────────── -->
   <div id="refline">
-    <div class="coord" id="coord"><span class="dim">not signed in</span></div>
-    <span id="dirty">■</span>
-    <span id="quota"></span>
-    <button id="gear" aria-label="Settings">⚙</button>
+    <div class="hdr">
+      <span class="mark">⌥</span>
+      <div class="coord" id="coord"><span class="dim">not signed in</span></div>
+      <span id="dirty">●</span>
+      <span id="quota"></span>
+      <button id="gear" aria-label="Settings">⚙</button>
+    </div>
+    <div class="tabs" id="tabs"></div>
   </div>
 
   <main>
@@ -578,10 +657,17 @@ input.masked.plain{ -webkit-text-security:none; text-security:none; letter-spaci
     <section class="view" id="v-tree">
       <div class="branchpick">
         <select id="branchsel" aria-label="Branch"></select>
-        <button class="btn" id="newbranch">Branch</button>
+        <button class="btn small" id="newbranch">+ Branch</button>
+        <span class="spacer"></span>
       </div>
       <div class="crumbs" id="crumbs"></div>
-      <div id="treelist"></div>
+
+      <div class="filebox">
+        <div class="commitbar" id="commitbar"></div>
+        <div id="treelist"></div>
+      </div>
+
+      <div id="readme"></div>
     </section>
 
     <!-- ── 4. File editor ─────────────────────────────────── -->
@@ -607,6 +693,7 @@ input.masked.plain{ -webkit-text-security:none; text-security:none; letter-spaci
            contents — this is the only way to do it without replacing the editor
            with a full component like CodeMirror. -->
       <div id="edwrap">
+        <div id="gut" aria-hidden="true"></div>
         <pre id="hl" aria-hidden="true"><code></code></pre>
         <textarea id="editor" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"></textarea>
       </div>
@@ -625,6 +712,8 @@ input.masked.plain{ -webkit-text-security:none; text-security:none; letter-spaci
     <section class="view" id="v-log"></section>
 
     <section class="view" id="v-actions"></section>
+
+    <section class="view" id="v-run"></section>
 
     <section class="view" id="v-prs"></section>
 
@@ -726,6 +815,8 @@ const S = {
   buffer:  '',     // what's in the editor right now
   quota:   null,   // rate-limit remaining, from response headers
   view:    'auth', // which screen is showing — the back button needs to know
+  runId:   null,   // the Actions run being watched
+  poll:    null,   // its polling timer
   wrap:    false   // word wrap in the editor
 };
 
@@ -889,6 +980,12 @@ const api = {
                gh(`/repos/${o}/${r}/actions/workflows/${id}/dispatches`,
                   { method:'POST', body:{ ref } }),
 
+  run:       (o, r, id) => gh(`/repos/${o}/${r}/actions/runs/${id}`),
+  runJobs:   (o, r, id) => gh(`/repos/${o}/${r}/actions/runs/${id}/jobs`),
+  artifacts: (o, r, id) => gh(`/repos/${o}/${r}/actions/runs/${id}/artifacts`),
+  cancelRun: (o, r, id) => gh(`/repos/${o}/${r}/actions/runs/${id}/cancel`,  { method:'POST' }),
+  rerun:     (o, r, id) => gh(`/repos/${o}/${r}/actions/runs/${id}/rerun`,   { method:'POST' }),
+
   delRef:    (o, r, branch) =>
                gh(`/repos/${o}/${r}/git/refs/heads/${enc(branch)}`, { method:'DELETE' })
 };
@@ -949,6 +1046,10 @@ const enc = p => p.split('/').map(encodeURIComponent).join('/');
 const $ = id => document.getElementById(id);
 
 function show(view){
+  // A run screen left behind would go on polling GitHub every four seconds for
+  // as long as the app is open. Stop it the moment we navigate away.
+  if (view !== 'run' && S.poll) { clearTimeout(S.poll); S.poll = null; }
+
   document.querySelectorAll('.view').forEach(v => v.classList.remove('on'));
   $('v-' + view).classList.add('on');
   S.view = view;
@@ -969,6 +1070,10 @@ window.appBack = () => {
   switch (S.view) {
     case 'file':
       backToTree();
+      return true;
+
+    case 'run':
+      openActions();
       return true;
 
     case 'search':
@@ -997,24 +1102,49 @@ window.appBack = () => {
 /* The ref line — prints exactly where you are, in git's own terms. */
 function paintRef(){
   const c = $('coord');
-  if (!S.user)  { c.innerHTML = '<span class="dim">not signed in</span>'; return; }
-  if (!S.repo)  { c.innerHTML = `<span class="dim">${S.user.login}</span>`; return; }
 
-  const bits = [
-    `<span class="lit">${S.repo.owner}/${S.repo.name}</span>`
-  ];
-  if (S.repo.private) bits.push('<span class="dim">private</span>');
-  bits.push(`<span class="dim">${S.branch || '…'}</span>`);
-  if (S.file) {
-    bits.push(`<span>${S.file.path}</span>`);
-    bits.push(`<span class="dim">${S.file.sha.slice(0, 7)}</span>`);
-  } else if (S.path) {
-    bits.push(`<span>${S.path}/</span>`);
-  }
-  c.innerHTML = '<span>' + bits.join('<span class="sep">·</span>') + '</span>';
+  if (!S.user) { c.innerHTML = '<span class="dim">not signed in</span>'; paintTabs(); return; }
+  if (!S.repo) { c.innerHTML = `<span class="owner">${S.user.login}</span>`; paintTabs(); return; }
 
-  $('dirty').classList.toggle('on', isDirty());
+  c.innerHTML =
+      `<span class="owner">${S.repo.owner}</span>`
+    + `<span class="sep">/</span>`
+    + `<span class="repo">${S.repo.name}</span>`
+    + (S.repo.private ? '<span class="pill">Private</span>' : '');
+
+  $('dirty').classList.toggle('on', isDirty() || isMoved());
+  paintTabs();
 }
+
+/* ── Tabs ─────────────────────────────────────────────────────────────────
+   GitHub's own navigation, minus the parts this app does not do. They appear
+   only once a repo is open, because before that there is nothing to navigate.
+   ──────────────────────────────────────────────────────────────────────── */
+const TABS = [
+  { id:'code',    label:'Code',          go:() => loadTree(S.path) },
+  { id:'prs',     label:'Pull requests', go:openPRs },
+  { id:'actions', label:'Actions',       go:openActions },
+  { id:'search',  label:'Search',        go:openSearch },
+  { id:'log',     label:'History',       go:() => openLog(null) }
+];
+
+function paintTabs(){
+  const t = $('tabs');
+  if (!S.repo) { t.innerHTML = ''; return; }
+
+  // As far as the tab strip is concerned, the file editor is still "Code".
+  const here = (S.view === 'tree' || S.view === 'file') ? 'code' : S.view;
+
+  t.innerHTML = '';
+  TABS.forEach(tab => {
+    const b = document.createElement('button');
+    b.textContent = tab.label;
+    b.className = tab.id === here ? 'on' : '';
+    b.onclick = tab.go;
+    t.appendChild(b);
+  });
+}
+
 
 function paintQuota(){
   $('quota').textContent = S.quota !== null ? S.quota + '⁄h' : '';
@@ -1252,8 +1382,8 @@ async function loadTree(path){
       const b = document.createElement('button');
       b.className = 'rowmain';
       b.innerHTML = `
-        <span class="glyph">${it.type === 'dir' ? '›' : '·'}</span>
-        <span class="name">${it.name}${it.type === 'dir' ? '/' : ''}</span>
+        <span class="glyph">${it.type === 'dir' ? '▸' : '▤'}</span>
+        <span class="name">${it.name}</span>
         <span class="meta">${it.type === 'dir' ? '' : bytes(it.size)}</span>`;
       b.onclick = () => it.type === 'dir' ? loadTree(it.path) : openFile(it.path);
 
@@ -1267,9 +1397,55 @@ async function loadTree(path){
       row.appendChild(m);
       list.appendChild(row);
     });
+    paintCommitBar();
+    paintReadme(items);
+
   } catch (e) {
     list.innerHTML = `<div class="empty">${e.message}</div>`;
   }
+}
+
+/* ── The commit bar across the top of the file table ──────────────────────
+   GitHub shows the last commit that touched each individual file. There is no
+   API that returns that in one call — it would be one request per row, and a
+   twenty-file folder would burn twenty of the five thousand requests an hour.
+   So this shows the latest commit touching THIS directory, which is one call
+   and answers the question you usually have: how fresh is any of this.
+   ──────────────────────────────────────────────────────────────────────── */
+async function paintCommitBar(){
+  const el = $('commitbar');
+  el.innerHTML = '<span class="msg">Loading…</span>';
+  try {
+    const cs = await api.commits(S.repo.owner, S.repo.name, S.branch, S.path || null);
+    if (!cs.length) { el.innerHTML = '<span class="msg">No commits yet.</span>'; return; }
+
+    const c = cs[0];
+    el.innerHTML = `
+      <span class="who">${esc(c.author ? c.author.login : c.commit.author.name)}</span>
+      <span class="msg">${esc(c.commit.message.split('\n')[0])}</span>
+      <span class="when">${c.sha.slice(0, 7)} · ${ago(c.commit.author.date)}</span>`;
+  } catch {
+    el.innerHTML = '';   // a missing commit bar is better than an error in it
+  }
+}
+
+/* GitHub renders the README under the file list. So does this. */
+async function paintReadme(items){
+  const box = $('readme');
+  box.innerHTML = '';
+
+  const rm = items.find(i => i.type === 'file' && /^readme(\.md|\.markdown)?$/i.test(i.name));
+  if (!rm) return;
+
+  try {
+    const f = await api.contents(S.repo.owner, S.repo.name, rm.path, S.branch);
+    if (!f.content) return;
+    box.innerHTML = `
+      <div class="readme">
+        <div class="rhead">▤ ${esc(rm.name)}</div>
+        <div class="md">${markdown(b64decode(f.content))}</div>
+      </div>`;
+  } catch { /* a README that won't load is not worth an error */ }
 }
 
 function paintCrumbs(){
@@ -1286,7 +1462,10 @@ function paintCrumbs(){
       b.textContent = label;
       b.onclick = () => loadTree(path);
       c.appendChild(b);
-      c.appendChild(Object.assign(document.createElement('span'), { textContent:' / ' }));
+      const sl = document.createElement('span');
+      sl.className = 'slash';
+      sl.textContent = ' / ';
+      c.appendChild(sl);
     }
   };
 
@@ -1493,7 +1672,7 @@ function commitSheet(){
       <br>on <b>${S.branch}</b>
     </div>
 
-    ${d ? `<div class="diffstat">${d.added} added · ${d.removed} removed</div>
+    ${d ? `<div class="diffstat"><span class="a">+${d.added}</span> <span class="d">−${d.removed}</span> lines changed</div>
            <div class="diff">${d.html}</div>`
         : '<div class="diffstat">Contents unchanged — only the path moves.</div>'}
 
@@ -1772,11 +1951,7 @@ async function openActions(){
         <span class="glyph ${cls}"></span>
         <span class="name">${esc(r.name)} <span style="color:var(--dim)">#${r.run_number}</span></span>
         <span class="meta">${ago(r.created_at)}</span>`;
-      // The APK lives behind an authenticated download, so hand the run to the
-      // browser, where you are already signed in to GitHub.
-      b.onclick = () => window.Native
-        ? window.Native.openUrl(r.html_url)
-        : window.open(r.html_url, '_blank');
+      b.onclick = () => openRun(r.id);
       v.appendChild(b);
     });
   } catch (e) {
@@ -1815,14 +1990,18 @@ async function runSheet(){
         const btn = $('w-' + i);
         busy(btn, true, 'Starting…');
         try {
+          const before = Date.now();
           await api.dispatch(S.repo.owner, S.repo.name, w.id, S.branch);
           closeSheet();
-          toast('Started ' + w.name + ' on ' + S.branch);
+          toast('Starting ' + w.name + '…');
 
-          // GitHub queues the run asynchronously — ask again in a moment or the
-          // list still shows only the previous run and it looks like nothing
-          // happened.
-          setTimeout(openActions, 2500);
+          // The dispatch returns 204 the moment GitHub accepts the request — the
+          // run itself does not exist yet. So poll for a run of this workflow that
+          // did not exist a second ago, then open it.
+          const id = await findNewRun(w.id, before);
+          if (id) openRun(id);
+          else { toast('Started, but the run has not appeared yet.'); openActions(); }
+
         } catch (e) {
           toast(e.status === 403
             ? 'The token cannot start workflows. Set Actions to read and write.'
@@ -1835,6 +2014,181 @@ async function runSheet(){
     });
   } catch (e) {
     $('sheetbody').innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+
+/* Wait for GitHub to actually create the run we just asked for. */
+async function findNewRun(workflowId, since){
+  for (let i = 0; i < 8; i++) {
+    await sleep(1200);
+    try {
+      const { workflow_runs: runs } = await api.runs(S.repo.owner, S.repo.name);
+      const mine = runs.find(r =>
+        r.workflow_id === workflowId &&
+        new Date(r.created_at).getTime() >= since - 10000);
+      if (mine) return mine.id;
+    } catch { /* keep waiting */ }
+  }
+  return null;
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* ── A run, live ──────────────────────────────────────────────────────────
+   Every step of every job, updating in place while it runs, with the artifact
+   dropping in at the bottom the moment it exists. This is the whole point: you
+   commit from the app, build from the app, and install what the app built,
+   without ever leaving it.
+   ──────────────────────────────────────────────────────────────────────── */
+function stopPoll(){
+  if (S.poll) { clearTimeout(S.poll); S.poll = null; }
+}
+
+const STEP = {
+  success:   ['done',  '●'],
+  failure:   ['fail',  '✕'],
+  cancelled: ['fail',  '⊘'],
+  skipped:   ['skip',  '–'],
+  timed_out: ['fail',  '⏱']
+};
+
+function stepClass(st){
+  if (st.status === 'in_progress') return ['live',  '◐'];
+  if (st.status === 'queued')      return ['queue', '○'];
+  return STEP[st.conclusion] || ['queue', '○'];
+}
+
+const secs = (a, b) => {
+  if (!a) return '';
+  const d = Math.round(((b ? new Date(b) : new Date()) - new Date(a)) / 1000);
+  return d < 60 ? d + 's' : Math.floor(d / 60) + 'm ' + (d % 60) + 's';
+};
+
+async function openRun(id){
+  S.runId = id;
+  show('run');
+  $('v-run').innerHTML = '<div class="empty">Loading…</div>';
+  await tickRun();
+}
+
+async function tickRun(){
+  // If the user navigated away, stop — do not keep polling a screen nobody is on.
+  if (S.view !== 'run') { stopPoll(); return; }
+
+  const o = S.repo.owner, r = S.repo.name, id = S.runId;
+
+  try {
+    const [run, { jobs }] = await Promise.all([
+      api.run(o, r, id),
+      api.runJobs(o, r, id)
+    ]);
+
+    const running = run.status !== 'completed';
+
+    // Progress is real: how many steps have finished, out of how many exist.
+    const steps = jobs.flatMap(j => j.steps || []);
+    const done  = steps.filter(st => st.status === 'completed').length;
+    const pct   = steps.length ? Math.round(done / steps.length * 100) : (running ? 5 : 100);
+
+    const state = running
+      ? ['wait', run.status === 'queued' ? 'Queued' : 'Running']
+      : run.conclusion === 'success' ? ['ok', 'Succeeded'] : ['bad', capitalise(run.conclusion || 'Finished')];
+
+    let html = `
+      <div class="runhead">
+        <div class="title">${esc(run.name)} <span style="color:var(--fg-muted);font-weight:400">#${run.run_number}</span></div>
+        <div class="sub">${esc(run.head_branch)} · ${run.head_sha.slice(0, 7)} · ${ago(run.created_at)}</div>
+        <div class="state ${state[0]}">${state[1]}${running ? ' · ' + secs(run.run_started_at) : ' in ' + secs(run.run_started_at, run.updated_at)}</div>
+        <div class="bar"><i style="width:${pct}%"></i></div>
+        <div class="barstat"><span>${done}/${steps.length || '?'} steps</span><span>${pct}%</span></div>
+      </div>`;
+
+    jobs.forEach(j => {
+      const [jc, jg] = stepClass(j);
+      html += `
+        <div class="jobbox">
+          <div class="jhead"><span class="step ${jc}" style="padding:0;border:0"><span class="g">${jg}</span></span>
+            ${esc(j.name)}
+            <span class="when">${secs(j.started_at, j.completed_at)}</span>
+          </div>
+          ${(j.steps || []).map(st => {
+            const [c, g] = stepClass(st);
+            return `<div class="step ${c}">
+                      <span class="g">${g}</span>
+                      <span class="n">${esc(st.name)}</span>
+                      <span class="t">${secs(st.started_at, st.completed_at)}</span>
+                    </div>`;
+          }).join('')}
+        </div>`;
+    });
+
+    // ── The artifact. It only exists once the run has finished. ────────────
+    if (!running) {
+      try {
+        const { artifacts } = await api.artifacts(o, r, id);
+        const live = artifacts.filter(a => !a.expired);
+        if (live.length) {
+          html += `
+            <div class="artbox">
+              <div class="ahead">Artifacts</div>
+              ${live.map((a, i) => `
+                <button class="art" id="art-${i}">
+                  <span class="g">⤓</span>
+                  <span class="n">${esc(a.name)}</span>
+                  <span class="s">${bytes(a.size_in_bytes)}</span>
+                </button>`).join('')}
+            </div>`;
+        }
+      } catch { /* Actions read permission may be missing; the run still shows */ }
+    }
+
+    $('v-run').innerHTML = html;
+
+    // Artifact downloads are authenticated and redirect to blob storage, which
+    // sends no CORS headers — the WebView cannot fetch them. The browser can,
+    // because you are already signed in to GitHub there.
+    document.querySelectorAll('.art').forEach(el => {
+      el.onclick = () => window.Native
+        ? window.Native.openUrl(run.html_url)
+        : window.open(run.html_url, '_blank');
+    });
+
+    setBar([
+      { label:'Back',   onClick:openActions },
+      running
+        ? { label:'Cancel', onClick:() => controlRun('cancel'), grow:true }
+        : { label:'Re-run', onClick:() => controlRun('rerun'), grow:true },
+      { label:'GitHub', onClick:() => window.Native
+          ? window.Native.openUrl(run.html_url)
+          : window.open(run.html_url, '_blank'), solid:true }
+    ]);
+
+    // Poll while it is alive. Four seconds is frequent enough to feel live and
+    // slow enough that a ten-minute build costs 150 of the 5000 requests an hour.
+    stopPoll();
+    if (running) S.poll = setTimeout(tickRun, 4000);
+
+  } catch (e) {
+    stopPoll();
+    $('v-run').innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    setBar([{ label:'Back', onClick:openActions, solid:true }]);
+  }
+}
+
+const capitalise = w => w.charAt(0).toUpperCase() + w.slice(1);
+
+async function controlRun(what){
+  try {
+    if (what === 'cancel') {
+      await api.cancelRun(S.repo.owner, S.repo.name, S.runId);
+      toast('Cancelling…');
+    } else {
+      await api.rerun(S.repo.owner, S.repo.name, S.runId);
+      toast('Re-running…');
+    }
+    setTimeout(tickRun, 1500);
+  } catch (e) {
+    toast(e.status === 403 ? 'The token cannot control workflows. Set Actions to read and write.' : e.message, 6000);
   }
 }
 
@@ -2559,10 +2913,12 @@ function paintHL(now){
     if (html === null) {                        // no rules for this file type
       ed.classList.add('plain');
       $('hl').classList.add('off');
+      paintGutter();                            // numbers still apply
       return;
     }
     ed.classList.remove('plain');
     $('hl').classList.remove('off');
+    paintGutter();
     // The trailing newline matters: without it the last line of the <pre> and the
     // last line of the textarea disagree about height, and everything shifts.
     $('hl').firstChild.innerHTML = html + '\n';
@@ -2571,13 +2927,27 @@ function paintHL(now){
   now ? run() : (hlTimer = setTimeout(run, 110));
 }
 
-/* The two layers scroll as one. */
+/* All three layers scroll as one: gutter, highlight, textarea. The gutter only
+   follows vertically — line numbers must not slide away sideways. */
 function syncScroll(){
-  const ed = $('editor'), hl = $('hl');
-  hl.scrollTop  = ed.scrollTop;
-  hl.scrollLeft = ed.scrollLeft;
+  const ed = $('editor');
+  $('hl').scrollTop   = ed.scrollTop;
+  $('hl').scrollLeft  = ed.scrollLeft;
+  $('gut').scrollTop  = ed.scrollTop;
 }
 $('editor').addEventListener('scroll', syncScroll);
+
+function paintGutter(){
+  const n = S.buffer ? S.buffer.split('\n').length : 1;
+  const g = $('gut');
+  // Only rebuild when the count actually changes — this runs on every keystroke.
+  if (g.dataset.n === String(n)) return;
+  g.dataset.n = n;
+
+  let out = '';
+  for (let i = 1; i <= n; i++) out += i + '\n';
+  g.textContent = out;
+}
 
 /* ═══════════════════════════════════════════════════════════════════════
    SETTINGS
