@@ -190,6 +190,37 @@ input.masked.plain{ -webkit-text-security:none; text-security:none; letter-spaci
   display:flex; justify-content:space-between; align-items:center;
   margin-top:8px; font-size:11px; color:var(--dim);
 }
+/* ── Checkbox, drawn by hand ──────────────────────────────────
+   An unchecked hairline square; checked, it inverts to a solid white block with
+   a black tick — the same inversion the rest of the app uses for emphasis.
+   ──────────────────────────────────────────────────────────── */
+.check{
+  display:flex; align-items:center; gap:12px;
+  min-height:var(--tap);
+  font-size:12px; color:var(--text);
+  text-transform:none; letter-spacing:0;
+  cursor:pointer; margin-bottom:0;
+}
+.check input{
+  position:absolute; opacity:0;   /* still focusable, still keyboard-toggleable */
+  width:0; height:0;
+}
+.check .box{
+  width:18px; height:18px; flex:none;
+  border:1px solid var(--rule-lit);
+  display:grid; place-items:center;
+}
+.check input:checked + .box{
+  background:var(--pure);
+  border-color:var(--pure);
+}
+.check input:checked + .box::after{
+  content:'\2713';                 /* ✓ */
+  color:var(--void);
+  font-size:12px; line-height:1; font-weight:700;
+}
+.check input:focus-visible + .box{ outline:1px solid var(--pure); outline-offset:2px; }
+
 .tokmeta button{
   background:none; border:0; color:var(--text); font:inherit; padding:4px;
   text-decoration:underline; text-underline-offset:3px; text-decoration-color:var(--rule-lit);
@@ -343,8 +374,9 @@ input.masked.plain{ -webkit-text-security:none; text-security:none; letter-spaci
         </div>
 
         <div class="field">
-          <label style="display:flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text);cursor:pointer">
-            <input type="checkbox" id="remember" checked style="width:auto;accent-color:#fff">
+          <label class="check">
+            <input type="checkbox" id="remember" checked>
+            <span class="box"></span>
             Keep me signed in on this device
           </label>
           <p class="hint">
@@ -529,13 +561,18 @@ async function gh(path, opts = {}){
     // Without this the WebView happily serves the directory listing it fetched
     // before your last commit, and the file you just created appears to be
     // missing — it is on GitHub, you are just looking at a cached copy.
+    //
+    // This must stay a fetch OPTION. Do not "improve" it into a
+    // Cache-Control: no-cache request header: that is a non-simple header, so it
+    // forces a CORS preflight, and GitHub's preflight does not list Cache-Control
+    // as an allowed header. The browser then blocks every request before it
+    // leaves the device and fetch() fails with a bare "Failed to fetch".
     cache: 'no-store',
 
     headers: {
       'Authorization': 'Bearer ' + S.token,
       'Accept': 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28',
-      'Cache-Control': 'no-cache',
       ...(opts.body ? { 'Content-Type': 'application/json' } : {})
     },
     body: opts.body ? JSON.stringify(opts.body) : undefined
