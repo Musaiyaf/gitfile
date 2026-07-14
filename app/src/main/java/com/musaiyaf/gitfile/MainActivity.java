@@ -389,10 +389,10 @@ public class MainActivity extends Activity {
                     }
 
                     long total = c.getContentLengthLong();
-                    File got = new File(dir, unzip ? "artifact.zip" : safe(name));
+                    File dest = new File(dir, unzip ? "artifact.zip" : safe(name));
 
                     try (InputStream in = c.getInputStream();
-                         FileOutputStream out = new FileOutputStream(got)) {
+                         FileOutputStream out = new FileOutputStream(dest)) {
                         byte[] buf = new byte[32768];
                         long got = 0;
                         int lastPct = -1;
@@ -413,29 +413,31 @@ public class MainActivity extends Activity {
 
                     // A release asset is already the file. Nothing to unpack.
                     if (!unzip) {
-                        if (got.getName().toLowerCase().endsWith(".apk")) {
-                            js("onDownloadDone", "apk", got.getAbsolutePath(), got.getName());
+                        if (dest.getName().toLowerCase().endsWith(".apk")) {
+                            js("onDownloadDone", "apk", dest.getAbsolutePath(), dest.getName());
                         } else {
-                            String saved = saveToDownloads(got, got.getName());
+                            String saved = saveToDownloads(dest, dest.getName());
                             js("onDownloadDone", "file", "", saved);
                         }
                         return;
                     }
 
                     // Unpack. An APK inside is the thing we are really after.
-                    File zip = got;
+                    File zip = dest;
                     File apk = null;
                     try (ZipInputStream zis = new ZipInputStream(new java.io.FileInputStream(zip))) {
                         for (ZipEntry e; (e = zis.getNextEntry()) != null; ) {
-                            String name = new File(e.getName()).getName();   // no path traversal
-                            if (e.isDirectory() || name.isEmpty()) continue;
+                            // getName() on the File strips any directory part, so a
+                            // hostile entry called "../../evil" cannot escape our folder.
+                            String entryName = new File(e.getName()).getName();
+                            if (e.isDirectory() || entryName.isEmpty()) continue;
 
-                            File out = new File(dir, name);
-                            try (FileOutputStream fo = new FileOutputStream(out)) {
+                            File unpacked = new File(dir, entryName);
+                            try (FileOutputStream fo = new FileOutputStream(unpacked)) {
                                 byte[] buf = new byte[32768];
                                 for (int n; (n = zis.read(buf)) > 0; ) fo.write(buf, 0, n);
                             }
-                            if (name.toLowerCase().endsWith(".apk")) apk = out;
+                            if (entryName.toLowerCase().endsWith(".apk")) apk = unpacked;
                         }
                     }
 
