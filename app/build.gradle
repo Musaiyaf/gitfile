@@ -1,0 +1,55 @@
+plugins {
+    id 'com.android.application'
+}
+
+// The keystore is NOT committed. The build workflow decodes it from a repository
+// secret into app/release.keystore just before compiling, and deletes it after.
+// If it isn't there — someone building locally, say — we fall back to a debug
+// signature so the build still succeeds.
+def keystore = file('release.keystore')
+
+android {
+    namespace 'com.musaiyaf.gitfile'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.musaiyaf.gitfile'
+        minSdk 24
+        targetSdk 35
+
+        // Every CI build gets a higher versionCode than the last, so a new APK
+        // always installs over the old one instead of being rejected as a
+        // downgrade. Locally it's just 1.
+        versionCode System.getenv('GITHUB_RUN_NUMBER') ? System.getenv('GITHUB_RUN_NUMBER').toInteger() : 1
+        versionName '1.0'
+    }
+
+    signingConfigs {
+        release {
+            if (keystore.exists()) {
+                storeFile     keystore
+                storePassword System.getenv('KEYSTORE_PASSWORD')
+                keyAlias      System.getenv('KEY_ALIAS')
+                keyPassword   System.getenv('KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig keystore.exists() ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    // WebViewAssetLoader — lets the WebView serve the bundled HTML from a real
+    // https origin instead of file://, so CORS and localStorage behave normally.
+    implementation 'androidx.webkit:webkit:1.12.1'
+}
