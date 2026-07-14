@@ -9,6 +9,7 @@ import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
+import android.util.Base64;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -19,7 +20,16 @@ import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.app.Activity;
 
+import androidx.documentfile.provider.DocumentFile;
 import androidx.webkit.WebViewAssetLoader;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * The whole app is one HTML file in assets/. This class exists only to put a
@@ -49,7 +59,12 @@ public class MainActivity extends Activity {
 
     /** Held between opening the system file picker and the result coming back. */
     private ValueCallback<Uri[]> pickerCallback;
-    private static final int PICK_FILES = 1;
+    private static final int PICK_FILES  = 1;
+    private static final int PICK_FOLDER = 2;
+
+    /** The folder the user last chose, flattened. Read lazily, one file at a time. */
+    private final List<DocumentFile> folderFiles = new ArrayList<>();
+    private final List<String>       folderPaths = new ArrayList<>();
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -76,7 +91,8 @@ public class MainActivity extends Activity {
         // Expose native storage to the page. This is only safe because the page is
         // our own bundled asset served from APP_ORIGIN and nothing else is ever
         // allowed to load in this WebView (see shouldOverrideUrlLoading below).
-        web.addJavascriptInterface(new Native(this), "Native");
+        bridge = new Native(this);
+        web.addJavascriptInterface(bridge, "Native");
 
         web.setWebViewClient(new WebViewClient() {
 
@@ -127,6 +143,41 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+
+        if (requestCode == PICK_FOLDER) {
+            if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+                bridge.js("onFolderPicked", "[]");   // user backed out
+                return;
+            }
+            final Uri tree = data.getData();
+
+            // Walking a folder tree over the SAF is slow enough to jank the UI, and a
+            // deep tree can take seconds. Do it off the main thread.
+            new Thread(() -> {
+                folderFiles.clear();
+                folderPaths.clear();
+                try {
+                    DocumentFile root = DocumentFile.fromTreeUri(MainActivity.this, tree);
+                    String base = (root != null && root.getName() != null) ? root.getName() : "";
+                    walkFolder(root, base);
+
+                    // Hand back names and sizes only. The bytes come later, per file.
+                    JSONArray arr = new JSONArray();
+                    for (int i = 0; i < folderPaths.size(); i++) {
+                        JSONObject o = new JSONObject();
+                        o.put("path",  folderPaths.get(i));
+                        o.put("size",  folderFiles.get(i).length());
+                        o.put("index", i);
+                        arr.put(o);
+                    }
+                    bridge.js("onFolderPicked", arr.toString());
+                } catch (Exception e) {
+                    bridge.js("onFolderPicked", "[]");
+                }
+            }).start();
+            return;
+        }
+
         if (requestCode != PICK_FILES || pickerCallback == null) {
             super.onActivityResult(requestCode, resultCode, data);
             return;
@@ -182,6 +233,77 @@ public class MainActivity extends Activity {
         public void copy(String text) {
             ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
             cm.setPrimaryClip(ClipData.newPlainText("gitfile", text));
+        }
+
+        /**
+         * Open Android's folder picker.
+         *
+         * A web <input webkitdirectory> does nothing useful here: Android's WebView has
+         * no directory mode, so FileChooserParams.createIntent() quietly produces an
+         * ordinary single-file intent — which is why "upload folder" was only ever
+         * uploading one file. The Storage Access Framework is the only real folder
+         * picker on Android, and it is native-only.
+         */
+        @JavascriptInterface
+        public void pickFolder() {
+            startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), PICK_FOLDER);
+        }
+
+        /**
+         * Read one file from the chosen folder, base64-encoded.
+         *
+         * Deliberately lazy. Slurping a whole folder into one JSON string would mean
+         * holding every file in memory at once, in both Java and JavaScript, and would
+         * make the progress bar a lie — it would already be done by the time it showed.
+         * The page asks for files one at a time, as it uploads them.
+         */
+        @JavascriptInterface
+        public String readEntry(int index) {
+            try {
+                Uri uri = folderFiles.get(index).getUri();
+                try (InputStream in = getContentResolver().openInputStream(uri)) {
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    byte[] chunk = new byte[16384];
+                    for (int n; (n = in.read(chunk)) > 0; ) out.write(chunk, 0, n);
+                    return Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP);
+                }
+            } catch (Exception e) {
+                return null;   // the page turns a null into a readable error
+            }
+        }
+
+        /** Call a global JS function on the UI thread. */
+        void js(String fn, String... args) {
+            StringBuilder call = new StringBuilder(fn).append("(");
+            for (int i = 0; i < args.length; i++) {
+                if (i > 0) call.append(",");
+                call.append(JSONObject.quote(args[i]));
+            }
+            call.append(")");
+            runOnUiThread(() -> web.evaluateJavascript(call.toString(), null));
+        }
+    }
+
+    private Native bridge;
+
+    /** Walk a picked folder depth-first, flattening it into paths the repo can use. */
+    private void walkFolder(DocumentFile dir, String prefix) {
+        DocumentFile[] children = dir.listFiles();
+        if (children == null) return;
+
+        for (DocumentFile f : children) {
+            String name = f.getName();
+            if (name == null) continue;
+
+            String path = prefix.isEmpty() ? name : prefix + "/" + name;
+
+            if (f.isDirectory()) {
+                if (name.equals(".git")) continue;   // never upload the repo's own guts
+                walkFolder(f, path);
+            } else {
+                folderFiles.add(f);
+                folderPaths.add(path);
+            }
         }
     }
 
