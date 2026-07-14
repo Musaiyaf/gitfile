@@ -106,20 +106,45 @@ h1{
 }
 
 /* ── Rows (repo list, file tree) ─────────────────────────────── */
-.row{
+/* A row is a wrapper: the body opens the thing, the ⋯ opens its menu. */
+.row{ display:flex; align-items:stretch; border-bottom:1px solid var(--rule); }
+
+.rowmain{
   display:flex; align-items:center; gap:12px;
-  width:100%; min-height:var(--tap);
+  flex:1; min-width:0; min-height:var(--tap);
   padding:12px 14px;
-  background:transparent; border:0; border-bottom:1px solid var(--rule);
-  color:var(--text); font:inherit; text-align:left;
-  cursor:pointer;
+  background:transparent; border:0;
+  color:var(--text); font:inherit; text-align:left; cursor:pointer;
 }
-.row:hover, .row:focus-visible{ background:var(--panel); }
-.row:active{ background:var(--raised); }
-.row .glyph{ color:var(--dim); width:14px; flex:none; }
-.row .name{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.row .meta{ color:var(--dim); font-size:11px; flex:none; }
+.rowmain:hover, .rowmain:focus-visible{ background:var(--panel); }
+.rowmain:active{ background:var(--raised); }
+.rowmain .glyph{ color:var(--dim); width:14px; flex:none; }
+.rowmain .name{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.rowmain .meta{ color:var(--dim); font-size:11px; flex:none; }
 .row.dir .name{ color:var(--pure); }
+
+.rowmenu{
+  flex:none; width:var(--tap);
+  background:transparent; border:0; border-left:1px solid var(--rule);
+  color:var(--dim); font:inherit; cursor:pointer;
+}
+.rowmenu:hover, .rowmenu:focus-visible{ background:var(--panel); color:var(--pure); }
+
+/* Inverted tag — the only place a filled white block appears in a list. */
+.tag{
+  flex:none; font-size:9.5px; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--void); background:var(--pure); padding:2px 6px;
+}
+
+/* A stack of choices inside a sheet. */
+.sheetlist{ display:flex; flex-direction:column; margin-bottom:20px; }
+.sheetlist button{
+  min-height:var(--tap); padding:12px 0;
+  background:transparent; border:0; border-bottom:1px solid var(--rule);
+  color:var(--text); font:inherit; text-align:left; cursor:pointer;
+}
+.sheetlist button:hover, .sheetlist button:focus-visible{ color:var(--pure); }
+.sheetlist button small{ display:block; color:var(--dim); font-size:11px; margin-top:3px; line-height:1.5; }
 
 /* ── Buttons ─────────────────────────────────────────────────── */
 button{ font:inherit; cursor:pointer; }
@@ -322,10 +347,11 @@ input.masked.plain{ -webkit-text-security:none; text-security:none; letter-spaci
             Keep me signed in on this device
           </label>
           <p class="hint">
-            The token is kept in this app's private storage on your device. It is never
-            sent anywhere except api.github.com. On a shared device, leave this off — the
-            token then lives in memory and is gone when you close the app.
+            The token is never sent anywhere except api.github.com. On a shared device,
+            leave this off — the token then lives in memory and is gone when you close
+            the app.
           </p>
+          <p class="hint">Saving to: <b id="backend">…</b></p>
         </div>
 
         <button class="btn solid wide" id="signin">Sign in</button>
@@ -362,6 +388,10 @@ input.masked.plain{ -webkit-text-security:none; text-security:none; letter-spaci
 
   <!-- ── Bottom action bar ────────────────────────────────── -->
   <div id="bar"><div id="barwrap"></div></div>
+
+  <!-- The file pickers. Hidden; opened from the New sheet. -->
+  <input type="file" id="filepick" multiple style="display:none">
+  <input type="file" id="dirpick" webkitdirectory directory style="display:none">
 
 </div>
 
@@ -494,10 +524,17 @@ const API = 'https://api.github.com';
 async function gh(path, opts = {}){
   const res = await fetch(API + path, {
     method: opts.method || 'GET',
+
+    // Without this the WebView happily serves the directory listing it fetched
+    // before your last commit, and the file you just created appears to be
+    // missing — it is on GitHub, you are just looking at a cached copy.
+    cache: 'no-store',
+
     headers: {
       'Authorization': 'Bearer ' + S.token,
       'Accept': 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28',
+      'Cache-Control': 'no-cache',
       ...(opts.body ? { 'Content-Type': 'application/json' } : {})
     },
     body: opts.body ? JSON.stringify(opts.body) : undefined
@@ -523,7 +560,7 @@ async function gh(path, opts = {}){
 function ghMessage(status, data){
   if (status === 401) return 'Token rejected by GitHub' + (data?.message ? ': ' + data.message : '') + '. Check it was pasted in full.';
   if (status === 403 && S.quota === '0') return 'Rate limit reached. It resets within the hour.';
-  if (status === 403) return 'Token lacks permission for this. Check Contents and Pull requests are set to read and write.';
+  if (status === 403) return 'Token lacks permission for this. Contents, Pull requests and Administration all need to be read and write.';
   if (status === 404) return 'Not found — or the token cannot see this repository.';
   if (status === 409) return 'Conflict. The branch moved. Reopen the file to get the current version.';
   if (status === 422 && data?.errors?.length) return data.errors.map(e => e.message || e.code).join('. ');
@@ -551,14 +588,77 @@ const api = {
 
   delFile:   (o, r, path, body) => gh(`/repos/${o}/${r}/contents/${enc(path)}`, { method:'DELETE', body }),
 
-  /* Branching is just pointing a new ref at an existing commit. */
-  ref:       (o, r, branch)   => gh(`/repos/${o}/${r}/git/ref/heads/${encodeURIComponent(branch)}`),
+  /* Branching is just pointing a new ref at an existing commit.
+     Note enc(), not encodeURIComponent: a branch called fix/typo has a real
+     slash in its ref path, and escaping it to %2F makes GitHub 404. */
+  ref:       (o, r, branch)    => gh(`/repos/${o}/${r}/git/ref/heads/${enc(branch)}`),
   makeRef:   (o, r, name, sha) => gh(`/repos/${o}/${r}/git/refs`, {
                 method:'POST', body:{ ref:'refs/heads/' + name, sha }
               }),
+  moveRef:   (o, r, branch, sha) => gh(`/repos/${o}/${r}/git/refs/heads/${enc(branch)}`, {
+                method:'PATCH', body:{ sha }
+              }),
 
-  makePR:    (o, r, body)     => gh(`/repos/${o}/${r}/pulls`, { method:'POST', body })
+  /* The plumbing. The contents API can only touch one file per commit; these
+     four let us build a commit containing any number of changes. */
+  commit:     (o, r, sha)  => gh(`/repos/${o}/${r}/git/commits/${sha}`),
+  makeBlob:   (o, r, body) => gh(`/repos/${o}/${r}/git/blobs`,   { method:'POST', body }),
+  makeTree:   (o, r, body) => gh(`/repos/${o}/${r}/git/trees`,   { method:'POST', body }),
+  makeCommit: (o, r, body) => gh(`/repos/${o}/${r}/git/commits`, { method:'POST', body }),
+  treeRec:    (o, r, sha)  => gh(`/repos/${o}/${r}/git/trees/${sha}?recursive=1`),
+
+  /* Repositories themselves. Both of these need the token's Administration
+     permission set to read and write. */
+  createRepo: (body)       => gh('/user/repos', { method:'POST', body }),
+  patchRepo:  (o, r, body) => gh(`/repos/${o}/${r}`, { method:'PATCH', body }),
+
+  makePR:    (o, r, body)  => gh(`/repos/${o}/${r}/pulls`, { method:'POST', body })
 };
+
+
+/* ── ONE COMMIT, MANY FILES ───────────────────────────────────
+   The contents API is one-file-per-commit, which is fine for editing but
+   absurd for uploading a folder — thirty files would mean thirty commits.
+
+   Git's own model is four objects deep, so we build it the way git does:
+     1. find where the branch currently points          (a commit)
+     2. that commit names a tree                        (the whole file listing)
+     3. upload each new file's bytes                    (a blob per file)
+     4. lay the changes over the old tree               (a new tree)
+     5. wrap that tree in a commit, parented on the old (a new commit)
+     6. move the branch to point at it                  (update the ref)
+
+   A `null` sha in the tree means "this path is gone", so deletion comes free.
+
+   entries: [{ path, b64 }] to add or replace
+            [{ path, delete:true }] to remove
+   ──────────────────────────────────────────────────────────── */
+async function commitFiles(entries, message, onProgress){
+  const o = S.repo.owner, r = S.repo.name;
+
+  const head = (await api.ref(o, r, S.branch)).object.sha;
+  const base = (await api.commit(o, r, head)).tree.sha;
+
+  const tree = [];
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    if (onProgress) onProgress(i, entries.length, e.path);
+
+    if (e.delete) {
+      tree.push({ path: e.path, mode: '100644', type: 'blob', sha: null });
+    } else {
+      const blob = await api.makeBlob(o, r, { content: e.b64, encoding: 'base64' });
+      tree.push({ path: e.path, mode: '100644', type: 'blob', sha: blob.sha });
+    }
+  }
+
+  const newTree = await api.makeTree(o, r, { base_tree: base, tree });
+  const commit  = await api.makeCommit(o, r, {
+    message, tree: newTree.sha, parents: [head]
+  });
+  await api.moveRef(o, r, S.branch, commit.sha);
+  return commit;
+}
 
 /* Encode a path but keep the slashes — they're structure, not data. */
 const enc = p => p.split('/').map(encodeURIComponent).join('/');
@@ -580,9 +680,10 @@ function paintRef(){
   if (!S.repo)  { c.innerHTML = `<span class="dim">${S.user.login}</span>`; return; }
 
   const bits = [
-    `<span class="lit">${S.repo.owner}/${S.repo.name}</span>`,
-    `<span class="dim">${S.branch || '…'}</span>`
+    `<span class="lit">${S.repo.owner}/${S.repo.name}</span>`
   ];
+  if (S.repo.private) bits.push('<span class="dim">private</span>');
+  bits.push(`<span class="dim">${S.branch || '…'}</span>`);
   if (S.file) {
     bits.push(`<span>${S.file.path}</span>`);
     bits.push(`<span class="dim">${S.file.sha.slice(0, 7)}</span>`);
@@ -640,7 +741,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet()
 function busy(btn, on, label){
   if (!btn) return;
   btn.disabled = on;
-  if (on) { btn.dataset.was = btn.textContent; btn.textContent = label || 'Working…'; }
+  if (on) { if (!btn.dataset.was) btn.dataset.was = btn.textContent; btn.textContent = label || 'Working…'; }
   else if (btn.dataset.was) { btn.textContent = btn.dataset.was; }
 }
 
@@ -720,7 +821,10 @@ async function openRepos(){
   S.repo = null; S.file = null; S.path = '';
   paintRef();
   show('repos');
-  setBar([{ label:'Sign out', onClick:signOut }]);
+  setBar([
+    { label:'Sign out', onClick:signOut },
+    { label:'New repository', onClick:newRepoSheet, solid:true, grow:true }
+  ]);
 
   const list = $('repolist');
   list.innerHTML = '<div class="empty">Loading…</div>';
@@ -731,18 +835,25 @@ async function openRepos(){
 
     list.innerHTML = '';
     repos.forEach(r => {
+      const row = document.createElement('div');
+      row.className = 'row';
+
       const b = document.createElement('button');
-      b.className = 'row';
+      b.className = 'rowmain';
       b.innerHTML = `
         <span class="glyph">${r.private ? '▪' : '▫'}</span>
         <span class="name">${r.full_name}</span>
+        ${r.private ? '<span class="tag">private</span>' : ''}
         <span class="meta">${r.default_branch}</span>`;
       b.onclick = () => openRepo({
         owner: r.owner.login,
         name: r.name,
-        default_branch: r.default_branch
+        default_branch: r.default_branch,
+        private: r.private
       });
-      list.appendChild(b);
+
+      row.appendChild(b);
+      list.appendChild(row);
     });
   } catch (e) {
     list.innerHTML = `<div class="empty">${e.message}</div>`;
@@ -790,14 +901,11 @@ async function loadTree(path){
   show('tree');
   paintCrumbs();
 
-  // The PR button only exists when a PR is actually possible — you
-  // cannot open one from the default branch into itself.
-  const actions = [{ label:'Repos', onClick:openRepos }];
-  if (S.branch !== S.repo.default_branch) {
-    actions.push({ label:'PR', onClick:prSheet });
-  }
-  actions.push({ label:'New file', onClick:newFileSheet, solid:true, grow:true });
-  setBar(actions);
+  setBar([
+    { label:'Repos', onClick:openRepos },
+    { label:'Repo',  onClick:repoSheet },
+    { label:'+ New', onClick:newSheet, solid:true, grow:true }
+  ]);
 
   const list = $('treelist');
   list.innerHTML = '<div class="empty">Loading…</div>';
@@ -817,14 +925,26 @@ async function loadTree(path){
 
     list.innerHTML = '';
     items.forEach(it => {
+      const row = document.createElement('div');
+      row.className = 'row' + (it.type === 'dir' ? ' dir' : '');
+
       const b = document.createElement('button');
-      b.className = 'row' + (it.type === 'dir' ? ' dir' : '');
+      b.className = 'rowmain';
       b.innerHTML = `
         <span class="glyph">${it.type === 'dir' ? '›' : '·'}</span>
         <span class="name">${it.name}${it.type === 'dir' ? '/' : ''}</span>
         <span class="meta">${it.type === 'dir' ? '' : bytes(it.size)}</span>`;
       b.onclick = () => it.type === 'dir' ? loadTree(it.path) : openFile(it.path);
-      list.appendChild(b);
+
+      const m = document.createElement('button');
+      m.className = 'rowmenu';
+      m.textContent = '⋯';
+      m.setAttribute('aria-label', 'Actions for ' + it.name);
+      m.onclick = () => rowMenu(it);
+
+      row.appendChild(b);
+      row.appendChild(m);
+      list.appendChild(row);
     });
   } catch (e) {
     list.innerHTML = `<div class="empty">${e.message}</div>`;
@@ -998,6 +1118,328 @@ async function doCommit(){
 }
 
 
+/* --- 7a2. The New sheet — everything you can add ------------- */
+function newSheet(){
+  sheet('New', `
+    <div class="sheetlist">
+      <button id="n-file">New file<small>Type it here and commit</small></button>
+      <button id="n-folder">New folder<small>Git cannot store an empty folder, so a .gitkeep goes inside</small></button>
+      <button id="n-up">Upload files<small>Any type, any number — all in one commit</small></button>
+      <button id="n-updir">Upload folder<small>Keeps the folder's structure</small></button>
+    </div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => {
+    $('n-file').onclick  = newFileSheet;
+    $('n-folder').onclick = newFolderSheet;
+    $('n-up').onclick    = () => { closeSheet(); $('filepick').click(); };
+    $('n-updir').onclick = pickFolder;
+  });
+}
+
+
+/* --- 7a3. The Repo sheet — what you can do to the repo itself */
+function repoSheet(){
+  const priv = !!S.repo.private;
+  const canPR = S.branch !== S.repo.default_branch;
+
+  sheet('Repository', `
+    <div class="overwrite">
+      <b>${S.repo.owner}/${S.repo.name}</b><br>
+      ${priv ? 'Private' : 'Public'} · default branch <b>${S.repo.default_branch}</b>
+    </div>
+    <div class="sheetlist">
+      <button id="r-vis">Make ${priv ? 'public' : 'private'}<small>${
+        priv ? 'Anyone on GitHub will be able to read this repository'
+             : 'Only you will be able to see this repository'
+      }</small></button>
+      ${canPR ? `<button id="r-pr">Open pull request<small>${S.branch} → ${S.repo.default_branch}</small></button>` : ''}
+    </div>
+    <button class="btn wide" onclick="closeSheet()">Close</button>
+  `, () => {
+    $('r-vis').onclick = doToggleVisibility;
+    if ($('r-pr')) $('r-pr').onclick = prSheet;
+  });
+}
+
+async function doToggleVisibility(){
+  const target = !S.repo.private;
+  if (!confirm(`Make ${S.repo.name} ${target ? 'private' : 'public'}?`)) return;
+
+  const btn = $('r-vis');
+  busy(btn, true, 'Changing…');
+  try {
+    await api.patchRepo(S.repo.owner, S.repo.name, { private: target });
+    S.repo.private = target;
+    closeSheet();
+    paintRef();
+    toast('Now ' + (target ? 'private' : 'public'));
+  } catch (e) {
+    toast(e.message, 6000);
+  } finally {
+    busy(btn, false);
+  }
+}
+
+
+/* --- 7a4. New repository ------------------------------------ */
+function newRepoSheet(){
+  sheet('New repository', `
+    <div class="field">
+      <label for="rname">Name</label>
+      <input type="text" id="rname" placeholder="my-project" spellcheck="false" autocapitalize="off">
+    </div>
+    <div class="field">
+      <label for="rdesc">Description</label>
+      <input type="text" id="rdesc" placeholder="optional">
+    </div>
+    <div class="field">
+      <label style="display:flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text);cursor:pointer">
+        <input type="checkbox" id="rpriv" checked style="width:auto;accent-color:#fff">
+        Private
+      </label>
+    </div>
+    <button class="btn solid wide" id="rgo">Create</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => { $('rgo').onclick = doNewRepo; });
+}
+
+async function doNewRepo(){
+  const btn  = $('rgo');
+  const name = $('rname').value.trim();
+  if (!name) { toast('Give it a name.'); return; }
+
+  busy(btn, true, 'Creating…');
+  try {
+    // auto_init matters: without it the repo has no commits and therefore no
+    // branches at all, and there is literally nothing to open.
+    const repo = await api.createRepo({
+      name,
+      description: $('rdesc').value.trim(),
+      private:     $('rpriv').checked,
+      auto_init:   true
+    });
+
+    closeSheet();
+    toast('Created ' + repo.full_name);
+    await openRepo({
+      owner: repo.owner.login,
+      name: repo.name,
+      default_branch: repo.default_branch,
+      private: repo.private
+    });
+  } catch (e) {
+    toast(e.message, 6000);
+  } finally {
+    busy(btn, false);
+  }
+}
+
+
+/* --- 7a5. New folder ---------------------------------------- */
+function newFolderSheet(){
+  const here = S.path ? S.path + '/' : '';
+  sheet('New folder', `
+    <div class="field">
+      <label for="fpath">Path</label>
+      <input type="text" id="fpath" value="${here}" spellcheck="false" autocapitalize="off">
+      <p class="hint">
+        Git tracks files, not folders — an empty folder cannot exist in a
+        repository. An empty <b>.gitkeep</b> is committed inside so the folder
+        has something to hold it open.
+      </p>
+    </div>
+    <button class="btn solid wide" id="fgo">Create folder</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => { $('fgo').onclick = doNewFolder; });
+}
+
+async function doNewFolder(){
+  const btn  = $('fgo');
+  const path = $('fpath').value.trim().replace(/^\/+|\/+$/g, '');
+  if (!path) { toast('Name the folder.'); return; }
+
+  busy(btn, true, 'Creating…');
+  try {
+    await api.putFile(S.repo.owner, S.repo.name, path + '/.gitkeep', {
+      message: 'Add ' + path + '/',
+      content: '',
+      branch:  S.branch
+    });
+    closeSheet();
+    toast('Created ' + path + '/');
+    await loadTree(S.path);
+  } catch (e) {
+    toast(e.message, 6000);
+  } finally {
+    busy(btn, false);
+  }
+}
+
+
+/* --- 7a6. Upload ---------------------------------------------
+   Files come in as Blobs from an <input type=file>, or as a JSON payload
+   from the Android folder picker. Either way they end up as one commit.
+   ------------------------------------------------------------ */
+$('filepick').addEventListener('change', e => takeFiles([...e.target.files]));
+$('dirpick').addEventListener('change',  e => takeFiles([...e.target.files]));
+
+function fileToB64(file){
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    // readAsDataURL gives "data:...;base64,XXXX" — we want only the XXXX.
+    r.onload  = () => res(String(r.result).split(',')[1] || '');
+    r.onerror = () => rej(new Error('Could not read ' + file.name));
+    r.readAsDataURL(file);
+  });
+}
+
+async function takeFiles(files){
+  $('filepick').value = '';
+  $('dirpick').value  = '';
+  if (!files.length) return;
+
+  toast('Reading ' + files.length + ' file' + (files.length === 1 ? '' : 's') + '…');
+  try {
+    const here = S.path ? S.path + '/' : '';
+    const entries = [];
+    for (const f of files) {
+      // webkitRelativePath is set when the browser picked a whole directory;
+      // it preserves the structure. A plain file picker leaves it empty.
+      const rel = f.webkitRelativePath || f.name;
+      entries.push({ path: here + rel, b64: await fileToB64(f) });
+    }
+    uploadSheet(entries);
+  } catch (e) {
+    toast(e.message, 6000);
+  }
+}
+
+function pickFolder(){
+  closeSheet();
+  if (window.Native && window.Native.pickFolder) {
+    // Android has no directory mode in its file picker, so the app opens the
+    // system folder picker natively and hands the contents back.
+    toast('Reading folder…');
+    window.Native.pickFolder();
+  } else {
+    $('dirpick').click();       // browsers support webkitdirectory directly
+  }
+}
+
+/* Called by MainActivity once it has walked the chosen folder. */
+window.onFolderPicked = (json) => {
+  let files;
+  try { files = JSON.parse(json); }
+  catch { toast('Could not read that folder.'); return; }
+
+  if (!files.length) { toast('No files in that folder.'); return; }
+
+  const here = S.path ? S.path + '/' : '';
+  uploadSheet(files.map(f => ({ path: here + f.path, b64: f.b64 })));
+};
+
+function uploadSheet(entries){
+  // base64 is 4 chars per 3 bytes; close enough for a size readout.
+  const size = entries.reduce((n, e) => n + Math.ceil(e.b64.length * 3 / 4), 0);
+  const n = entries.length;
+
+  sheet('Upload', `
+    <div class="overwrite">
+      <b>${n}</b> file${n === 1 ? '' : 's'} · ${bytes(size)}<br>
+      into <b>${S.path ? S.path + '/' : S.repo.name + '/'}</b> on <b>${S.branch}</b>
+    </div>
+    <div class="field">
+      <label for="umsg">Message</label>
+      <input type="text" id="umsg" placeholder="Add ${n} file${n === 1 ? '' : 's'}">
+    </div>
+    <button class="btn solid wide" id="ugo">Commit all ${n} as one</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => { $('ugo').onclick = () => doUpload(entries); });
+}
+
+async function doUpload(entries){
+  const btn = $('ugo');
+  const n   = entries.length;
+  const msg = $('umsg').value.trim() || ('Add ' + n + ' file' + (n === 1 ? '' : 's'));
+
+  busy(btn, true, 'Uploading…');
+  try {
+    const c = await commitFiles(entries, msg,
+      (i, total) => busy(btn, true, `Uploading ${i + 1}/${total}…`));
+    closeSheet();
+    toast('Committed ' + n + ' file' + (n === 1 ? '' : 's') + ' · ' + c.sha.slice(0, 7));
+    await loadTree(S.path);
+  } catch (e) {
+    toast(e.message, 6000);
+  } finally {
+    busy(btn, false);
+  }
+}
+
+
+/* --- 7a7. Delete ---------------------------------------------
+   A file is a single contents-API call. A folder is not: git has no folder
+   object to delete, only the files inside it. So we read the branch's whole
+   tree, take every blob under the prefix, and null them all in one commit.
+   ------------------------------------------------------------ */
+function rowMenu(it){
+  const isDir = it.type === 'dir';
+  sheet(it.name, `
+    <div class="overwrite">${it.path}${isDir ? '/' : ''}</div>
+    <div class="sheetlist">
+      <button id="m-del">Delete ${isDir ? 'folder' : 'file'}<small>${
+        isDir ? 'Everything inside it goes too' : 'Commits the removal to ' + S.branch
+      }</small></button>
+    </div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => { $('m-del').onclick = () => doDelete(it); });
+}
+
+async function doDelete(it){
+  const isDir = it.type === 'dir';
+  if (!confirm(`Delete ${it.path}${isDir ? '/ and everything inside it' : ''}?\n\nThis is committed to ${S.branch}.`)) return;
+
+  const btn = $('m-del');
+  busy(btn, true, 'Deleting…');
+  try {
+    if (isDir) {
+      const o = S.repo.owner, r = S.repo.name;
+      const head = (await api.ref(o, r, S.branch)).object.sha;
+      const root = (await api.commit(o, r, head)).tree.sha;
+      const full = await api.treeRec(o, r, root);
+
+      const doomed = full.tree
+        .filter(node => node.type === 'blob' && node.path.startsWith(it.path + '/'))
+        .map(node => ({ path: node.path, delete: true }));
+
+      if (!doomed.length) throw new Error('Nothing inside that folder to delete.');
+      await commitFiles(doomed, 'Delete ' + it.path + '/');
+      toast('Deleted ' + doomed.length + ' file' + (doomed.length === 1 ? '' : 's'));
+
+    } else {
+      // Re-read the file so we lock against its current sha, not a stale one.
+      const f = await api.contents(S.repo.owner, S.repo.name, it.path, S.branch);
+      await api.delFile(S.repo.owner, S.repo.name, it.path, {
+        message: 'Delete ' + it.path,
+        sha:     f.sha,
+        branch:  S.branch
+      });
+      toast('Deleted ' + it.name);
+    }
+
+    closeSheet();
+    await loadTree(S.path);
+  } catch (e) {
+    toast(e.message, 6000);
+  } finally {
+    busy(btn, false);
+  }
+}
+
+
 /* --- 7b. New file ------------------------------------------- */
 function newFileSheet(){
   const here = S.path ? S.path + '/' : '';
@@ -1130,7 +1572,22 @@ window.addEventListener('beforeunload', e => {
 
 
 /* ── BOOT ─────────────────────────────────────────────────── */
+function paintBackend(){
+  const el = $('backend');
+  if (!el) return;
+  el.textContent =
+      window.Native  ? 'app storage (survives restarts)'
+    : window.storage ? 'artifact storage'
+    : (function(){
+        // localStorage can exist but be unwritable; find out rather than assume.
+        try { localStorage.setItem('gitfile:probe','1'); localStorage.removeItem('gitfile:probe');
+              return 'browser storage (may not survive a restart)'; }
+        catch { return 'memory only (will not survive a restart)'; }
+      })();
+}
+
 (async function boot(){
+  paintBackend();
   paintRef();
   const saved = await store.get(TOKEN_KEY);
   if (!saved) { setBar(null); return; }
