@@ -12,6 +12,8 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.webkit.JavascriptInterface;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
 import android.app.Activity;
 
 import androidx.webkit.WebViewAssetLoader;
@@ -40,6 +42,10 @@ public class MainActivity extends Activity {
     private static final String APP_ORIGIN = "https://appassets.androidplatform.net";
 
     private WebView web;
+
+    /** Held between opening the system file picker and the result coming back. */
+    private ValueCallback<Uri[]> pickerCallback;
+    private static final int PICK_FILES = 1;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -89,8 +95,44 @@ public class MainActivity extends Activity {
             }
         });
 
+        // Without a WebChromeClient, <input type="file"> is inert in a WebView —
+        // tapping it does nothing at all, with no error. This hands the request
+        // to Android's document picker and passes the chosen URIs back to the page.
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView view,
+                                             ValueCallback<Uri[]> callback,
+                                             FileChooserParams params) {
+                if (pickerCallback != null) pickerCallback.onReceiveValue(null);
+                pickerCallback = callback;
+                try {
+                    // createIntent() honours the input's multiple and accept
+                    // attributes, so one path covers both single and multi-select.
+                    startActivityForResult(params.createIntent(), PICK_FILES);
+                    return true;
+                } catch (Exception e) {
+                    pickerCallback = null;
+                    return false;
+                }
+            }
+        });
+
         setContentView(web);
         web.loadUrl(APP_ORIGIN + "/assets/index.html");
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode != PICK_FILES || pickerCallback == null) {
+            super.onActivityResult(requestCode, resultCode, data);
+            return;
+        }
+        // parseResult copes with both a single URI and a multi-select ClipData,
+        // and returns null when the user backs out — which the page must be told,
+        // or the file input stays wedged and will never open again.
+        pickerCallback.onReceiveValue(
+                WebChromeClient.FileChooserParams.parseResult(resultCode, data));
+        pickerCallback = null;
     }
 
     /**
