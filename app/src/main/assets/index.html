@@ -483,6 +483,27 @@ pre.log{
 @keyframes pulse{ 0%,100%{ opacity:1 } 50%{ opacity:.25 } }
 @media (prefers-reduced-motion:reduce){ .step.live .g{ animation:none; } }
 
+/* ══ About ═══════════════════════════════════════════════════ */
+.about{ text-align:center; padding:8px 0 20px; }
+.about .mark{
+  width:56px; height:56px; margin:0 auto 12px;
+  display:grid; place-items:center;
+  background:#fff; color:#000; border-radius:12px;
+  font-size:26px;
+}
+.about .name{ font-size:20px; font-weight:600; color:var(--fg); }
+.about .ver{ font-size:12px; color:var(--fg-muted); font-family:var(--mono); margin-top:2px; }
+
+.perms div{
+  display:flex; justify-content:space-between; align-items:baseline; gap:12px;
+  padding:10px 0 2px; border-top:1px solid var(--border);
+  font-size:13px;
+}
+.perms div:first-child{ border-top:0; }
+.perms div b{ color:var(--fg); font-weight:600; }
+.perms div span{ font-family:var(--mono); font-size:11px; color:var(--accent); flex:none; }
+.perms p{ font-size:12px; color:var(--fg-muted); margin:0 0 4px; line-height:1.5; }
+
 /* ══ Releases ════════════════════════════════════════════════ */
 .rel{
   border:1px solid var(--border); border-radius:var(--r);
@@ -3691,6 +3712,7 @@ $('gear').onclick = async () => {
         S.wrap ? 'On — long lines fold' : 'Off — long lines scroll sideways'
       }</small></button>
       <button id="s-out">Sign out<small>Forgets the token on this device</small></button>
+      <button id="s-about">About gitfile<small>Version, author, what this thing is</small></button>
     </div>
     <div class="overwrite" style="margin:18px 0 0">
       Signed in as <b>${S.user ? S.user.login : '—'}</b><br>
@@ -3707,9 +3729,84 @@ $('gear').onclick = async () => {
       toast(on ? 'Desktop view on. Pinch to zoom.' : 'Phone view.');
     };
     $('s-wrap').onclick = () => { closeSheet(); toggleWrap(); };
-    $('s-out').onclick  = () => { closeSheet(); signOut(); };
+    $('s-out').onclick   = () => { closeSheet(); signOut(); };
+    $('s-about').onclick = () => { closeSheet(); aboutSheet(); };
   });
 };
+
+/* ── About ───────────────────────────────────────────────────────────────── */
+function aboutSheet(){
+  const version = (window.Native && window.Native.appVersion)
+    ? window.Native.appVersion()
+    : 'web';
+
+  sheet('About', `
+    <div class="about">
+      <div class="mark">▤</div>
+      <div class="name">gitfile</div>
+      <div class="ver">${esc(version)}</div>
+    </div>
+
+    <p class="hint" style="margin-bottom:16px">
+      A GitHub repository file manager for Android. Browse a repo, edit a file,
+      commit it, cut a branch, open a pull request, run the build and install
+      what it produces — all from a phone.
+    </p>
+
+    <div class="overwrite">
+      Built by <b>Musaiyaf</b><br>
+      An HTML app in a WebView shell, built by GitHub Actions.<br>
+      It builds and ships itself.
+    </div>
+
+    <div class="sheetlist">
+      <button id="ab-repo">Source code<small>github.com/Musaiyaf/gitfile</small></button>
+      <button id="ab-token">Token permissions<small>What gitfile needs, and why</small></button>
+    </div>
+
+    <button class="btn wide" onclick="closeSheet()">Close</button>
+  `, () => {
+    const open = url => window.Native ? window.Native.openUrl(url) : window.open(url, '_blank');
+    $('ab-repo').onclick  = () => open('https://github.com/Musaiyaf/gitfile');
+    $('ab-token').onclick = () => { closeSheet(); permsSheet(); };
+  });
+}
+
+/* Spelling out what each permission actually buys, because "it says 403" is not
+   a thing anyone should have to debug twice. */
+function permsSheet(){
+  sheet('Token permissions', `
+    <p class="hint" style="margin-bottom:16px">
+      Create a <b>fine-grained token</b> at github.com/settings/tokens, give it
+      access to <b>All repositories</b>, and set:
+    </p>
+
+    <div class="perms">
+      <div><b>Contents</b><span>Read and write</span></div>
+      <p>Browsing, reading, editing, committing, deleting, uploading, renaming, branches, history, search.</p>
+
+      <div><b>Metadata</b><span>Read-only</span></div>
+      <p>Mandatory. GitHub adds it for you.</p>
+
+      <div><b>Pull requests</b><span>Read and write</span></div>
+      <p>Opening, listing and merging pull requests.</p>
+
+      <div><b>Actions</b><span>Read and write</span></div>
+      <p>Watching runs, reading logs, downloading artifacts. Write is only needed to start a run from the app.</p>
+
+      <div><b>Administration</b><span>Read and write</span></div>
+      <p>Creating repositories and switching a repository between public and private. Skip it if you don't need those.</p>
+    </div>
+
+    <p class="hint" style="margin:16px 0">
+      A repository the token cannot reach will read fine and then fail every write
+      with a 403 — which is why <b>All repositories</b> matters as much as the
+      permissions do.
+    </p>
+
+    <button class="btn wide" onclick="closeSheet()">Close</button>
+  `);
+}
 
 function toggleWrap(){
   S.wrap = !S.wrap;
