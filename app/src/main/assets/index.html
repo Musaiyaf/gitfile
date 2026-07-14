@@ -154,6 +154,21 @@ input:focus, textarea:focus, select:focus{ outline:none; border-color:var(--pure
 ::placeholder{ color:var(--dim); }
 
 .field{ margin-bottom:20px; }
+
+/* Masking via CSS rather than type=password. A password input invites Android's
+   autofill to drop a saved credential into it, which then gets sent to GitHub
+   as if it were your token — the source of a very confusing 401. */
+input.masked{ -webkit-text-security:disc; text-security:disc; letter-spacing:.08em; }
+input.masked.plain{ -webkit-text-security:none; text-security:none; letter-spacing:0; }
+
+.tokmeta{
+  display:flex; justify-content:space-between; align-items:center;
+  margin-top:8px; font-size:11px; color:var(--dim);
+}
+.tokmeta button{
+  background:none; border:0; color:var(--text); font:inherit; padding:4px;
+  text-decoration:underline; text-underline-offset:3px; text-decoration-color:var(--rule-lit);
+}
 .hint{ font-size:11px; color:var(--dim); margin-top:8px; line-height:1.6; }
 .hint a{ color:var(--text); }
 
@@ -285,7 +300,14 @@ input:focus, textarea:focus, select:focus{ outline:none; border-color:var(--pure
       <div class="pad">
         <div class="field">
           <label for="tok">GitHub token</label>
-          <input type="password" id="tok" placeholder="github_pat_… or ghp_…" autocomplete="off" spellcheck="false">
+          <input type="text" id="tok" name="gitfile-token" class="masked"
+                 placeholder="github_pat_… or ghp_…"
+                 autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+                 inputmode="text" data-lpignore="true">
+          <div class="tokmeta">
+            <span id="tokcount">0 characters</span>
+            <button type="button" id="tokshow">show</button>
+          </div>
           <p class="hint">
             Create a <b>fine-grained personal access token</b> at
             <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener">github.com/settings/tokens</a>.
@@ -296,13 +318,13 @@ input:focus, textarea:focus, select:focus{ outline:none; border-color:var(--pure
 
         <div class="field">
           <label style="display:flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text);cursor:pointer">
-            <input type="checkbox" id="remember" style="width:auto;accent-color:#fff">
+            <input type="checkbox" id="remember" checked style="width:auto;accent-color:#fff">
             Keep me signed in on this device
           </label>
           <p class="hint">
-            The token is stored in this browser only. It is never sent anywhere except
-            api.github.com. On a shared device, leave this off — the token then lives in
-            memory and disappears when you close the tab.
+            The token is kept in this app's private storage on your device. It is never
+            sent anywhere except api.github.com. On a shared device, leave this off — the
+            token then lives in memory and is gone when you close the app.
           </p>
         </div>
 
@@ -375,17 +397,24 @@ input:focus, textarea:focus, select:focus{ outline:none; border-color:var(--pure
 
 
 /* ── 1. STORAGE SHIM ──────────────────────────────────────────
-   Two hosts, two storage APIs:
-     • inside a Claude artifact  → window.storage (async key/value)
-     • hosted anywhere else      → localStorage
-   If neither works we fall back to memory, and the token simply
-   doesn't survive a reload. All three look identical to callers.
+   Three hosts, three storage APIs:
+     • inside the Android app    → window.Native (SharedPreferences)
+     • inside a Claude artifact  → window.storage
+     • a plain browser           → localStorage
+
+   The Android path matters: a WebView's localStorage is flushed to disk
+   lazily, so when Android kills the app to reclaim memory, a token written
+   moments earlier can simply vanish. SharedPreferences commits when told to.
+   If none are available we fall back to memory and the token doesn't survive
+   a reload. All four look identical to callers.
    ──────────────────────────────────────────────────────────── */
 const mem = {};
 
 const store = {
   async get(k){
     try{
+      // Native Android storage, when running inside the app.
+      if (window.Native) return window.Native.get(k) || null;
       if (window.storage) {
         const r = await window.storage.get(k);
         return r ? r.value : null;
@@ -395,12 +424,14 @@ const store = {
   },
   async set(k, v){
     try{
+      if (window.Native) { window.Native.set(k, v); return; }
       if (window.storage) { await window.storage.set(k, v); return; }
       localStorage.setItem(k, v);
     } catch { mem[k] = v; }
   },
   async del(k){
     try{
+      if (window.Native) { window.Native.del(k); return; }
       if (window.storage) { await window.storage.delete(k); return; }
       localStorage.removeItem(k);
     } catch { delete mem[k]; }
@@ -490,7 +521,7 @@ async function gh(path, opts = {}){
 
 /* Turn GitHub's error payloads into something a person can act on. */
 function ghMessage(status, data){
-  if (status === 401) return 'Token rejected. It may be expired or mistyped.';
+  if (status === 401) return 'Token rejected by GitHub' + (data?.message ? ': ' + data.message : '') + '. Check it was pasted in full.';
   if (status === 403 && S.quota === '0') return 'Rate limit reached. It resets within the hour.';
   if (status === 403) return 'Token lacks permission for this. Check Contents and Pull requests are set to read and write.';
   if (status === 404) return 'Not found — or the token cannot see this repository.';
@@ -618,8 +649,17 @@ function busy(btn, on, label){
 
 /* --- 6a. Sign in -------------------------------------------- */
 $('signin').onclick = async () => {
-  const t = $('tok').value.trim();
+  // Mobile keyboards and clipboards love to add a trailing space or newline,
+  // and GitHub rejects the token outright if one sneaks in.
+  const t = $('tok').value.replace(/\s+/g, '');
   if (!t) { toast('Paste a token first.'); return; }
+
+  // A fine-grained token starts github_pat_ and is ~93 characters; a classic one
+  // starts ghp_. If it doesn't look like either, the paste was probably truncated.
+  if (!/^(github_pat_|ghp_|gho_|ghs_)/.test(t)) {
+    toast('That does not look like a GitHub token. It should begin with github_pat_ or ghp_.');
+    return;
+  }
 
   const btn = $('signin');
   busy(btn, true, 'Checking…');
@@ -627,16 +667,41 @@ $('signin').onclick = async () => {
 
   try {
     S.user = await api.me();
-    if ($('remember').checked) await store.set(TOKEN_KEY, t);
+
+    if ($('remember').checked) {
+      await store.set(TOKEN_KEY, t);
+      // Read it straight back. If storage silently dropped it, say so now rather
+      // than letting you discover it the next time you open the app.
+      const back = await store.get(TOKEN_KEY);
+      if (back !== t) toast('Signed in, but this device would not save the token. You will need to paste it again next time.', 6000);
+    } else {
+      await store.del(TOKEN_KEY);
+    }
+
     $('tok').value = '';
+    paintTokCount();
     paintRef();
     await openRepos();
   } catch (e) {
     S.token = null;
-    toast(e.message);
+    toast(e.message, 6000);
   } finally {
     busy(btn, false);
   }
+};
+
+/* Live character count — the fastest way to spot a paste that got truncated.
+   A fine-grained token is 93 characters. */
+function paintTokCount(){
+  const n = $('tok').value.replace(/\s+/g, '').length;
+  $('tokcount').textContent = n + (n === 1 ? ' character' : ' characters');
+}
+$('tok').addEventListener('input', paintTokCount);
+
+$('tokshow').onclick = () => {
+  const f = $('tok');
+  const shown = f.classList.toggle('plain');
+  $('tokshow').textContent = shown ? 'hide' : 'show';
 };
 
 $('tok').addEventListener('keydown', e => { if (e.key === 'Enter') $('signin').click(); });
@@ -1078,7 +1143,10 @@ window.addEventListener('beforeunload', e => {
   } catch {
     S.token = null;
     await store.del(TOKEN_KEY);
+    $('tok').value = '';        // whatever autofill may have put there
+    paintTokCount();
     show('auth');
+    toast('The saved token is no longer valid. Paste a new one.', 6000);
   }
 })();
 </script>
