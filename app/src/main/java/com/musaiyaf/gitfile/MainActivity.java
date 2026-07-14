@@ -2,6 +2,7 @@ package com.musaiyaf.gitfile;
 
 import android.annotation.SuppressLint;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
@@ -10,6 +11,7 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.JavascriptInterface;
 import android.app.Activity;
 
 import androidx.webkit.WebViewAssetLoader;
@@ -61,6 +63,11 @@ public class MainActivity extends Activity {
         // Deliberately left off: setAllowFileAccessFromFileURLs and
         // setAllowUniversalAccessFromFileURLs. See the class comment.
 
+        // Expose native storage to the page. This is only safe because the page is
+        // our own bundled asset served from APP_ORIGIN and nothing else is ever
+        // allowed to load in this WebView (see shouldOverrideUrlLoading below).
+        web.addJavascriptInterface(new Native(this), "Native");
+
         web.setWebViewClient(new WebViewClient() {
 
             @Override
@@ -84,6 +91,40 @@ public class MainActivity extends Activity {
 
         setContentView(web);
         web.loadUrl(APP_ORIGIN + "/assets/index.html");
+    }
+
+    /**
+     * A key/value store the page can reach from JavaScript as window.Native.
+     *
+     * Why not just use localStorage? Because a WebView flushes it to disk lazily.
+     * Write the token, background the app, let Android reclaim the process to free
+     * memory, and the write can be lost — you come back and the app has forgotten
+     * you. SharedPreferences.apply() commits on its own thread and survives that.
+     *
+     * The file lives in the app's private data directory, which no other app can
+     * read, and is covered by the device's disk encryption.
+     */
+    public static class Native {
+        private final SharedPreferences prefs;
+
+        Native(android.content.Context ctx) {
+            this.prefs = ctx.getSharedPreferences("gitfile", MODE_PRIVATE);
+        }
+
+        @JavascriptInterface
+        public String get(String key) {
+            return prefs.getString(key, null);
+        }
+
+        @JavascriptInterface
+        public void set(String key, String value) {
+            prefs.edit().putString(key, value).apply();
+        }
+
+        @JavascriptInterface
+        public void del(String key) {
+            prefs.edit().remove(key).apply();
+        }
     }
 
     /** Back goes back through the app's own history before it leaves the app. */
