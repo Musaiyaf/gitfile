@@ -56,4 +56,7 @@ dependencies {
     // The Storage Access Framework's folder picker. Android has no other way to
     // let the user choose a directory.
     implementation 'androidx.documentfile:documentfile:1.0.1'
+
+    // FileProvider, so the package installer can read the APK we downloaded.
+    implementation 'androidx.core:core:1.13.1'
 }
