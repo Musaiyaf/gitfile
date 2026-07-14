@@ -1,0 +1,1086 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>gitfile</title>
+
+<style>
+/* ────────────────────────────────────────────────────────────────
+   DESIGN TOKENS
+   Strictly monochrome. There is no accent colour anywhere in this
+   app — emphasis is carried by INVERSION (white block, black text)
+   and by hairline rules. Same discipline as Reel Diary.
+   ──────────────────────────────────────────────────────────────── */
+:root{
+  --void:      #000000;  /* page */
+  --panel:     #0A0A0A;  /* cards, rows */
+  --raised:    #161616;  /* inputs, pressed states */
+  --rule:      #262626;  /* hairlines */
+  --rule-lit:  #3D3D3D;  /* hairlines on focus/hover */
+  --dim:       #6E6E6E;  /* metadata, captions */
+  --text:      #E5E5E5;  /* body */
+  --pure:      #FFFFFF;  /* emphasis, inverted surfaces */
+
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "IBM Plex Mono",
+          Menlo, Consolas, "Liberation Mono", monospace;
+
+  --tap: 44px;           /* minimum touch target */
+}
+
+*{ box-sizing:border-box; margin:0; padding:0; }
+
+html,body{ height:100%; }
+
+body{
+  background:var(--void);
+  color:var(--text);
+  font-family:var(--mono);
+  font-size:14px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  -webkit-tap-highlight-color:transparent;
+  overscroll-behavior:none;
+}
+
+/* Everything lives in one column, phone-first, capped on desktop. */
+#app{
+  max-width:760px;
+  margin:0 auto;
+  min-height:100%;
+  display:flex;
+  flex-direction:column;
+  border-left:1px solid var(--rule);
+  border-right:1px solid var(--rule);
+}
+@media (max-width:800px){ #app{ border:0; } }
+
+/* ── Focus: always visible, never coloured ───────────────────── */
+:focus-visible{
+  outline:1px solid var(--pure);
+  outline-offset:2px;
+}
+
+/* ── SIGNATURE: the ref line ──────────────────────────────────
+   A persistent strip printing the exact git coordinate you are
+   standing on: owner/repo · branch · path · blob sha. The sha is
+   the real one GitHub returned, and it is the same sha the commit
+   will be checked against. The interface tells you the truth.
+   ───────────────────────────────────────────────────────────── */
+#refline{
+  position:sticky; top:0; z-index:20;
+  background:var(--void);
+  border-bottom:1px solid var(--rule);
+  padding:10px 14px;
+  display:flex; align-items:center; gap:10px;
+  font-size:11.5px; letter-spacing:.02em;
+}
+#refline .coord{
+  flex:1; min-width:0;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  direction:rtl; text-align:left;   /* keeps the tail (filename) visible */
+}
+#refline .coord span{ direction:ltr; unicode-bidi:embed; }
+#refline .sep{ color:var(--rule-lit); padding:0 2px; }
+#refline .dim{ color:var(--dim); }
+#refline .lit{ color:var(--pure); }
+
+/* the dirty mark — a filled square, no colour needed */
+#dirty{ color:var(--pure); display:none; }
+#dirty.on{ display:inline; }
+
+#quota{ color:var(--dim); font-size:10.5px; white-space:nowrap; }
+
+/* ── Views ───────────────────────────────────────────────────── */
+main{ flex:1; padding-bottom:96px; }
+.view{ display:none; }
+.view.on{ display:block; }
+
+.pad{ padding:20px 14px; }
+
+h1{
+  font-size:13px; font-weight:400; letter-spacing:.22em;
+  text-transform:uppercase; color:var(--dim);
+  padding:22px 14px 10px;
+}
+
+/* ── Rows (repo list, file tree) ─────────────────────────────── */
+.row{
+  display:flex; align-items:center; gap:12px;
+  width:100%; min-height:var(--tap);
+  padding:12px 14px;
+  background:transparent; border:0; border-bottom:1px solid var(--rule);
+  color:var(--text); font:inherit; text-align:left;
+  cursor:pointer;
+}
+.row:hover, .row:focus-visible{ background:var(--panel); }
+.row:active{ background:var(--raised); }
+.row .glyph{ color:var(--dim); width:14px; flex:none; }
+.row .name{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.row .meta{ color:var(--dim); font-size:11px; flex:none; }
+.row.dir .name{ color:var(--pure); }
+
+/* ── Buttons ─────────────────────────────────────────────────── */
+button{ font:inherit; cursor:pointer; }
+
+.btn{
+  min-height:var(--tap); padding:0 16px;
+  background:transparent; color:var(--text);
+  border:1px solid var(--rule);
+  letter-spacing:.04em;
+}
+.btn:hover, .btn:focus-visible{ border-color:var(--pure); color:var(--pure); }
+.btn:disabled{ opacity:.35; cursor:not-allowed; border-color:var(--rule); color:var(--text); }
+
+/* inverted = the only "loud" surface in the app */
+.btn.solid{ background:var(--pure); color:var(--void); border-color:var(--pure); font-weight:600; }
+.btn.solid:hover:not(:disabled){ background:var(--text); }
+.btn.solid:disabled{ background:var(--raised); color:var(--dim); border-color:var(--rule); }
+
+.btn.wide{ width:100%; }
+
+/* ── Inputs ──────────────────────────────────────────────────── */
+label{ display:block; font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--dim); margin-bottom:8px; }
+
+input[type=text], input[type=password], textarea, select{
+  width:100%; padding:12px;
+  background:var(--raised); color:var(--text);
+  border:1px solid var(--rule);
+  font:inherit; border-radius:0;
+  -webkit-appearance:none; appearance:none;
+}
+input:focus, textarea:focus, select:focus{ outline:none; border-color:var(--pure); }
+::placeholder{ color:var(--dim); }
+
+.field{ margin-bottom:20px; }
+.hint{ font-size:11px; color:var(--dim); margin-top:8px; line-height:1.6; }
+.hint a{ color:var(--text); }
+
+/* ── Editor ──────────────────────────────────────────────────── */
+#editor{
+  width:100%;
+  min-height:52vh;
+  padding:14px;
+  background:var(--void);
+  color:var(--text);
+  border:0; border-top:1px solid var(--rule); border-bottom:1px solid var(--rule);
+  font-family:var(--mono); font-size:13px; line-height:1.65;
+  white-space:pre; overflow-wrap:normal; overflow-x:auto;
+  tab-size:2;
+  resize:vertical;
+}
+#editor:focus{ outline:none; }
+#editor[readonly]{ color:var(--dim); }
+
+#editstat{
+  display:flex; gap:16px;
+  padding:8px 14px;
+  font-size:11px; color:var(--dim);
+  border-bottom:1px solid var(--rule);
+}
+
+/* ── Bottom action bar: fixed, thumb-reachable ───────────────── */
+#bar{
+  position:fixed; bottom:0; left:0; right:0; z-index:30;
+  background:var(--void);
+  border-top:1px solid var(--rule);
+  padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+  display:none; gap:10px;
+}
+#bar.on{ display:flex; }
+#bar > *{ flex:1; }
+#bar .grow2{ flex:2; }
+#barwrap{ max-width:760px; margin:0 auto; display:flex; gap:10px; width:100%; }
+
+/* ── Sheet (commit / new branch / new PR / new file) ──────────── */
+#sheet{
+  position:fixed; inset:0; z-index:40;
+  background:rgba(0,0,0,.75);
+  display:none;
+  align-items:flex-end; justify-content:center;
+}
+#sheet.on{ display:flex; }
+#sheetbox{
+  width:100%; max-width:760px;
+  background:var(--void);
+  border-top:1px solid var(--pure);
+  padding:20px 14px calc(20px + env(safe-area-inset-bottom));
+  max-height:88vh; overflow-y:auto;
+  animation:rise .18s ease-out;
+}
+@keyframes rise{ from{ transform:translateY(14px); opacity:0; } to{ transform:none; opacity:1; } }
+@media (prefers-reduced-motion:reduce){ #sheetbox{ animation:none; } }
+
+#sheettitle{
+  font-size:11px; letter-spacing:.22em; text-transform:uppercase;
+  color:var(--dim); margin-bottom:18px;
+}
+
+/* the "you are overwriting this blob" line inside the commit sheet */
+.overwrite{
+  border-left:1px solid var(--rule-lit);
+  padding:8px 0 8px 12px; margin-bottom:20px;
+  font-size:11px; color:var(--dim); line-height:1.7;
+}
+.overwrite b{ color:var(--text); font-weight:400; }
+
+/* ── Toast / error ───────────────────────────────────────────── */
+#toast{
+  position:fixed; left:0; right:0; bottom:0; z-index:50;
+  display:none; justify-content:center;
+  padding:0 0 calc(96px + env(safe-area-inset-bottom));
+  pointer-events:none;
+}
+#toast.on{ display:flex; }
+#toastbox{
+  max-width:calc(760px - 28px); margin:0 14px;
+  background:var(--raised);
+  border:1px solid var(--rule-lit);
+  border-left:2px solid var(--pure);
+  padding:12px 14px;
+  font-size:12px; line-height:1.6;
+  pointer-events:auto;
+}
+
+/* ── Misc ────────────────────────────────────────────────────── */
+.empty{ padding:56px 14px; text-align:center; color:var(--dim); font-size:12px; line-height:1.8; }
+.spin{ display:inline-block; }         /* text-based spinner, no SVG */
+.crumbs{
+  padding:12px 14px; border-bottom:1px solid var(--rule);
+  font-size:11.5px; color:var(--dim);
+  display:flex; flex-wrap:wrap; align-items:center; gap:2px;
+}
+.crumbs button{
+  background:none; border:0; color:var(--text); font:inherit; padding:4px 2px;
+  text-decoration:underline; text-underline-offset:3px; text-decoration-color:var(--rule-lit);
+}
+.crumbs button:hover{ color:var(--pure); }
+.crumbs .now{ color:var(--pure); padding:4px 2px; }
+
+.branchpick{
+  display:flex; align-items:center; gap:10px;
+  padding:10px 14px; border-bottom:1px solid var(--rule);
+}
+.branchpick select{ flex:1; padding:8px 10px; font-size:12px; }
+.branchpick .btn{ min-height:36px; padding:0 12px; font-size:12px; flex:none; }
+</style>
+</head>
+
+<body>
+<div id="app">
+
+  <!-- ── SIGNATURE ELEMENT: the ref line ───────────────────── -->
+  <div id="refline">
+    <div class="coord" id="coord"><span class="dim">not signed in</span></div>
+    <span id="dirty">■</span>
+    <span id="quota"></span>
+  </div>
+
+  <main>
+
+    <!-- ── 1. Sign in ─────────────────────────────────────── -->
+    <section class="view on" id="v-auth">
+      <h1>Sign in</h1>
+      <div class="pad">
+        <div class="field">
+          <label for="tok">GitHub token</label>
+          <input type="password" id="tok" placeholder="github_pat_… or ghp_…" autocomplete="off" spellcheck="false">
+          <p class="hint">
+            Create a <b>fine-grained personal access token</b> at
+            <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener">github.com/settings/tokens</a>.
+            Grant these repository permissions: <b>Contents → Read and write</b>,
+            <b>Pull requests → Read and write</b>, <b>Metadata → Read</b>.
+          </p>
+        </div>
+
+        <div class="field">
+          <label style="display:flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text);cursor:pointer">
+            <input type="checkbox" id="remember" style="width:auto;accent-color:#fff">
+            Keep me signed in on this device
+          </label>
+          <p class="hint">
+            The token is stored in this browser only. It is never sent anywhere except
+            api.github.com. On a shared device, leave this off — the token then lives in
+            memory and disappears when you close the tab.
+          </p>
+        </div>
+
+        <button class="btn solid wide" id="signin">Sign in</button>
+      </div>
+    </section>
+
+    <!-- ── 2. Repositories ────────────────────────────────── -->
+    <section class="view" id="v-repos">
+      <h1>Repositories</h1>
+      <div id="repolist"></div>
+    </section>
+
+    <!-- ── 3. File tree ───────────────────────────────────── -->
+    <section class="view" id="v-tree">
+      <div class="branchpick">
+        <select id="branchsel" aria-label="Branch"></select>
+        <button class="btn" id="newbranch">Branch</button>
+      </div>
+      <div class="crumbs" id="crumbs"></div>
+      <div id="treelist"></div>
+    </section>
+
+    <!-- ── 4. File editor ─────────────────────────────────── -->
+    <section class="view" id="v-file">
+      <div id="editstat">
+        <span id="stat-lines">0 lines</span>
+        <span id="stat-bytes">0 B</span>
+        <span id="stat-state">clean</span>
+      </div>
+      <textarea id="editor" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"></textarea>
+    </section>
+
+  </main>
+
+  <!-- ── Bottom action bar ────────────────────────────────── -->
+  <div id="bar"><div id="barwrap"></div></div>
+
+</div>
+
+<!-- ── Sheet ──────────────────────────────────────────────── -->
+<div id="sheet" role="dialog" aria-modal="true">
+  <div id="sheetbox">
+    <div id="sheettitle"></div>
+    <div id="sheetbody"></div>
+  </div>
+</div>
+
+<!-- ── Toast ──────────────────────────────────────────────── -->
+<div id="toast"><div id="toastbox"></div></div>
+
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   gitfile — a GitHub repository file manager.
+
+   Talks straight to the GitHub REST API from the browser. No server,
+   no build step, one file. This is the prototype for the Kotlin app:
+   every API call below maps 1:1 to a Retrofit method later.
+
+   Contents:
+     1. Storage shim        — where the token lives
+     2. State
+     3. Base64 (UTF-8 safe) — GitHub gives/takes base64
+     4. GitHub API client   — every endpoint we use
+     5. UI plumbing         — views, ref line, toast, sheet, action bar
+     6. Screens             — auth, repos, tree, file
+     7. Actions             — commit, create file, delete, branch, PR
+   ═══════════════════════════════════════════════════════════════ */
+
+
+/* ── 1. STORAGE SHIM ──────────────────────────────────────────
+   Two hosts, two storage APIs:
+     • inside a Claude artifact  → window.storage (async key/value)
+     • hosted anywhere else      → localStorage
+   If neither works we fall back to memory, and the token simply
+   doesn't survive a reload. All three look identical to callers.
+   ──────────────────────────────────────────────────────────── */
+const mem = {};
+
+const store = {
+  async get(k){
+    try{
+      if (window.storage) {
+        const r = await window.storage.get(k);
+        return r ? r.value : null;
+      }
+      return localStorage.getItem(k);
+    } catch { return mem[k] ?? null; }
+  },
+  async set(k, v){
+    try{
+      if (window.storage) { await window.storage.set(k, v); return; }
+      localStorage.setItem(k, v);
+    } catch { mem[k] = v; }
+  },
+  async del(k){
+    try{
+      if (window.storage) { await window.storage.delete(k); return; }
+      localStorage.removeItem(k);
+    } catch { delete mem[k]; }
+  }
+};
+
+const TOKEN_KEY = 'gitfile:token';
+
+
+/* ── 2. STATE ─────────────────────────────────────────────── */
+const S = {
+  token:   null,   // PAT, in memory for the life of the tab
+  user:    null,   // { login, name }
+  repo:    null,   // { owner, name, default_branch }
+  branch:  null,   // current branch name
+  path:    '',     // current directory path ('' = repo root)
+  file:    null,   // { path, sha, text } — the open blob
+  buffer:  '',     // what's in the editor right now
+  quota:   null    // rate-limit remaining, from response headers
+};
+
+/* The editor is dirty when the buffer differs from the fetched blob. */
+const isDirty = () => !!S.file && S.buffer !== S.file.text;
+
+
+/* ── 3. BASE64, UTF-8 SAFE ────────────────────────────────────
+   btoa/atob only speak Latin-1. Anything with an emoji, an accent,
+   or Tamil in it breaks unless we go through TextEncoder first.
+   ──────────────────────────────────────────────────────────── */
+function b64encode(str){
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  // chunk it: String.fromCharCode(...huge) blows the call stack
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(bin);
+}
+
+function b64decode(b64){
+  const bin = atob(b64.replace(/\s/g, ''));
+  const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+  return new TextDecoder('utf-8', { fatal:false }).decode(bytes);
+}
+
+/* A blob is "binary" if it contains a NUL byte. Crude, but it is
+   what git itself does, and it is right often enough. */
+function looksBinary(b64){
+  const bin = atob(b64.replace(/\s/g, '').slice(0, 8000));
+  return bin.includes('\0');
+}
+
+
+/* ── 4. GITHUB API CLIENT ─────────────────────────────────────
+   One fetch wrapper. Every call goes through it so the rate-limit
+   header and error shape are handled in exactly one place.
+   ──────────────────────────────────────────────────────────── */
+const API = 'https://api.github.com';
+
+async function gh(path, opts = {}){
+  const res = await fetch(API + path, {
+    method: opts.method || 'GET',
+    headers: {
+      'Authorization': 'Bearer ' + S.token,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      ...(opts.body ? { 'Content-Type': 'application/json' } : {})
+    },
+    body: opts.body ? JSON.stringify(opts.body) : undefined
+  });
+
+  // GitHub reports your remaining hourly budget on every response.
+  const left = res.headers.get('x-ratelimit-remaining');
+  if (left !== null) { S.quota = left; paintQuota(); }
+
+  if (res.status === 204) return null;              // e.g. empty delete
+
+  const data = await res.json().catch(() => null);
+
+  if (!res.ok) {
+    const err = new Error(ghMessage(res.status, data));
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+/* Turn GitHub's error payloads into something a person can act on. */
+function ghMessage(status, data){
+  if (status === 401) return 'Token rejected. It may be expired or mistyped.';
+  if (status === 403 && S.quota === '0') return 'Rate limit reached. It resets within the hour.';
+  if (status === 403) return 'Token lacks permission for this. Check Contents and Pull requests are set to read and write.';
+  if (status === 404) return 'Not found — or the token cannot see this repository.';
+  if (status === 409) return 'Conflict. The branch moved. Reopen the file to get the current version.';
+  if (status === 422 && data?.errors?.length) return data.errors.map(e => e.message || e.code).join('. ');
+  return data?.message || ('Request failed (' + status + ')');
+}
+
+/* --- the endpoints, one function each ----------------------- */
+
+const api = {
+  me:        ()               => gh('/user'),
+
+  repos:     ()               => gh('/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member'),
+
+  branches:  (o, r)           => gh(`/repos/${o}/${r}/branches?per_page=100`),
+
+  /* Returns an array for a directory, an object for a file.
+     The file object carries `sha` — hold on to it, the commit needs it. */
+  contents:  (o, r, path, ref) => gh(`/repos/${o}/${r}/contents/${enc(path)}?ref=${encodeURIComponent(ref)}`),
+
+  /* Create OR update. Omit `sha` to create, include it to update.
+     The sha is optimistic locking: if someone else committed to this
+     file since you read it, GitHub rejects you with 409 instead of
+     silently clobbering their work. */
+  putFile:   (o, r, path, body) => gh(`/repos/${o}/${r}/contents/${enc(path)}`, { method:'PUT', body }),
+
+  delFile:   (o, r, path, body) => gh(`/repos/${o}/${r}/contents/${enc(path)}`, { method:'DELETE', body }),
+
+  /* Branching is just pointing a new ref at an existing commit. */
+  ref:       (o, r, branch)   => gh(`/repos/${o}/${r}/git/ref/heads/${encodeURIComponent(branch)}`),
+  makeRef:   (o, r, name, sha) => gh(`/repos/${o}/${r}/git/refs`, {
+                method:'POST', body:{ ref:'refs/heads/' + name, sha }
+              }),
+
+  makePR:    (o, r, body)     => gh(`/repos/${o}/${r}/pulls`, { method:'POST', body })
+};
+
+/* Encode a path but keep the slashes — they're structure, not data. */
+const enc = p => p.split('/').map(encodeURIComponent).join('/');
+
+
+/* ── 5. UI PLUMBING ───────────────────────────────────────── */
+const $ = id => document.getElementById(id);
+
+function show(view){
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('on'));
+  $('v-' + view).classList.add('on');
+  window.scrollTo(0, 0);
+}
+
+/* The ref line — prints exactly where you are, in git's own terms. */
+function paintRef(){
+  const c = $('coord');
+  if (!S.user)  { c.innerHTML = '<span class="dim">not signed in</span>'; return; }
+  if (!S.repo)  { c.innerHTML = `<span class="dim">${S.user.login}</span>`; return; }
+
+  const bits = [
+    `<span class="lit">${S.repo.owner}/${S.repo.name}</span>`,
+    `<span class="dim">${S.branch || '…'}</span>`
+  ];
+  if (S.file) {
+    bits.push(`<span>${S.file.path}</span>`);
+    bits.push(`<span class="dim">${S.file.sha.slice(0, 7)}</span>`);
+  } else if (S.path) {
+    bits.push(`<span>${S.path}/</span>`);
+  }
+  c.innerHTML = '<span>' + bits.join('<span class="sep">·</span>') + '</span>';
+
+  $('dirty').classList.toggle('on', isDirty());
+}
+
+function paintQuota(){
+  $('quota').textContent = S.quota !== null ? S.quota + '⁄h' : '';
+}
+
+let toastTimer;
+function toast(msg, ms = 4200){
+  $('toastbox').textContent = msg;
+  $('toast').classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => $('toast').classList.remove('on'), ms);
+}
+
+/* Bottom bar: rebuilt per screen from a list of {label, solid, onClick}. */
+function setBar(buttons){
+  const wrap = $('barwrap');
+  wrap.innerHTML = '';
+  if (!buttons || !buttons.length) { $('bar').classList.remove('on'); return; }
+  buttons.forEach(b => {
+    const el = document.createElement('button');
+    el.className = 'btn' + (b.solid ? ' solid' : '') + (b.grow ? ' grow2' : '');
+    el.textContent = b.label;
+    el.disabled = !!b.disabled;
+    el.onclick = b.onClick;
+    if (b.id) el.id = b.id;
+    wrap.appendChild(el);
+  });
+  $('bar').classList.add('on');
+}
+
+/* Sheet: a bottom drawer used for every form that isn't a screen. */
+function sheet(title, html, wire){
+  $('sheettitle').textContent = title;
+  $('sheetbody').innerHTML = html;
+  $('sheet').classList.add('on');
+  if (wire) wire();
+  const first = $('sheetbody').querySelector('input, textarea');
+  if (first) setTimeout(() => first.focus(), 60);
+}
+function closeSheet(){ $('sheet').classList.remove('on'); }
+
+$('sheet').addEventListener('click', e => { if (e.target.id === 'sheet') closeSheet(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
+
+function busy(btn, on, label){
+  if (!btn) return;
+  btn.disabled = on;
+  if (on) { btn.dataset.was = btn.textContent; btn.textContent = label || 'Working…'; }
+  else if (btn.dataset.was) { btn.textContent = btn.dataset.was; }
+}
+
+
+/* ── 6. SCREENS ───────────────────────────────────────────── */
+
+/* --- 6a. Sign in -------------------------------------------- */
+$('signin').onclick = async () => {
+  const t = $('tok').value.trim();
+  if (!t) { toast('Paste a token first.'); return; }
+
+  const btn = $('signin');
+  busy(btn, true, 'Checking…');
+  S.token = t;
+
+  try {
+    S.user = await api.me();
+    if ($('remember').checked) await store.set(TOKEN_KEY, t);
+    $('tok').value = '';
+    paintRef();
+    await openRepos();
+  } catch (e) {
+    S.token = null;
+    toast(e.message);
+  } finally {
+    busy(btn, false);
+  }
+};
+
+$('tok').addEventListener('keydown', e => { if (e.key === 'Enter') $('signin').click(); });
+
+async function signOut(){
+  await store.del(TOKEN_KEY);
+  Object.assign(S, { token:null, user:null, repo:null, branch:null, path:'', file:null, buffer:'' });
+  paintRef();
+  setBar(null);
+  show('auth');
+}
+
+
+/* --- 6b. Repositories --------------------------------------- */
+async function openRepos(){
+  S.repo = null; S.file = null; S.path = '';
+  paintRef();
+  show('repos');
+  setBar([{ label:'Sign out', onClick:signOut }]);
+
+  const list = $('repolist');
+  list.innerHTML = '<div class="empty">Loading…</div>';
+
+  try {
+    const repos = await api.repos();
+    if (!repos.length) { list.innerHTML = '<div class="empty">No repositories this token can reach.<br>Check the token\'s repository access.</div>'; return; }
+
+    list.innerHTML = '';
+    repos.forEach(r => {
+      const b = document.createElement('button');
+      b.className = 'row';
+      b.innerHTML = `
+        <span class="glyph">${r.private ? '▪' : '▫'}</span>
+        <span class="name">${r.full_name}</span>
+        <span class="meta">${r.default_branch}</span>`;
+      b.onclick = () => openRepo({
+        owner: r.owner.login,
+        name: r.name,
+        default_branch: r.default_branch
+      });
+      list.appendChild(b);
+    });
+  } catch (e) {
+    list.innerHTML = `<div class="empty">${e.message}</div>`;
+  }
+}
+
+
+/* --- 6c. File tree ------------------------------------------ */
+async function openRepo(repo){
+  S.repo = repo;
+  S.branch = repo.default_branch;
+  S.path = '';
+  S.file = null;
+
+  show('tree');
+  await loadBranches();
+  await loadTree('');
+}
+
+async function loadBranches(){
+  const sel = $('branchsel');
+  sel.innerHTML = `<option>${S.branch}</option>`;
+  try {
+    const bs = await api.branches(S.repo.owner, S.repo.name);
+    sel.innerHTML = '';
+    bs.forEach(b => {
+      const o = document.createElement('option');
+      o.value = o.textContent = b.name;
+      o.selected = b.name === S.branch;
+      sel.appendChild(o);
+    });
+  } catch { /* keep the single default option */ }
+}
+
+/* Switching branch re-reads the current directory on the new ref. */
+$('branchsel').onchange = async e => {
+  S.branch = e.target.value;
+  await loadTree(S.path);
+};
+
+async function loadTree(path){
+  S.path = path;
+  S.file = null;
+  paintRef();
+  show('tree');
+  paintCrumbs();
+
+  // The PR button only exists when a PR is actually possible — you
+  // cannot open one from the default branch into itself.
+  const actions = [{ label:'Repos', onClick:openRepos }];
+  if (S.branch !== S.repo.default_branch) {
+    actions.push({ label:'PR', onClick:prSheet });
+  }
+  actions.push({ label:'New file', onClick:newFileSheet, solid:true, grow:true });
+  setBar(actions);
+
+  const list = $('treelist');
+  list.innerHTML = '<div class="empty">Loading…</div>';
+
+  try {
+    const items = await api.contents(S.repo.owner, S.repo.name, path, S.branch);
+
+    // A path that is a file, not a directory — shouldn't happen from the UI.
+    if (!Array.isArray(items)) { return openFile(path); }
+
+    if (!items.length) { list.innerHTML = '<div class="empty">Empty directory.</div>'; return; }
+
+    // Directories first, then files. Both alphabetical.
+    items.sort((a, b) =>
+      (a.type === b.type) ? a.name.localeCompare(b.name) : (a.type === 'dir' ? -1 : 1)
+    );
+
+    list.innerHTML = '';
+    items.forEach(it => {
+      const b = document.createElement('button');
+      b.className = 'row' + (it.type === 'dir' ? ' dir' : '');
+      b.innerHTML = `
+        <span class="glyph">${it.type === 'dir' ? '›' : '·'}</span>
+        <span class="name">${it.name}${it.type === 'dir' ? '/' : ''}</span>
+        <span class="meta">${it.type === 'dir' ? '' : bytes(it.size)}</span>`;
+      b.onclick = () => it.type === 'dir' ? loadTree(it.path) : openFile(it.path);
+      list.appendChild(b);
+    });
+  } catch (e) {
+    list.innerHTML = `<div class="empty">${e.message}</div>`;
+  }
+}
+
+function paintCrumbs(){
+  const c = $('crumbs');
+  c.innerHTML = '';
+
+  const add = (label, path, isLast) => {
+    if (isLast) {
+      const s = document.createElement('span');
+      s.className = 'now'; s.textContent = label;
+      c.appendChild(s);
+    } else {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.onclick = () => loadTree(path);
+      c.appendChild(b);
+      c.appendChild(Object.assign(document.createElement('span'), { textContent:' / ' }));
+    }
+  };
+
+  const parts = S.path ? S.path.split('/') : [];
+  add(S.repo.name, '', parts.length === 0);
+  parts.forEach((p, i) => add(p, parts.slice(0, i + 1).join('/'), i === parts.length - 1));
+}
+
+const bytes = n =>
+  n < 1024 ? n + ' B' :
+  n < 1048576 ? (n / 1024).toFixed(1) + ' K' :
+  (n / 1048576).toFixed(1) + ' M';
+
+
+/* --- 6d. File editor ---------------------------------------- */
+async function openFile(path){
+  show('file');
+  const ed = $('editor');
+  ed.value = 'Loading…';
+  ed.readOnly = true;
+
+  try {
+    const f = await api.contents(S.repo.owner, S.repo.name, path, S.branch);
+
+    // The Contents API refuses to return content above 1 MB.
+    if (f.content === undefined || f.content === '') {
+      throw new Error('File is over 1 MB. The contents API will not return it — that needs the blobs API.');
+    }
+    if (looksBinary(f.content)) {
+      throw new Error('Binary file. gitfile edits text only.');
+    }
+
+    const text = b64decode(f.content);
+    S.file   = { path: f.path, sha: f.sha, text };
+    S.buffer = text;
+
+    ed.value = text;
+    ed.readOnly = false;
+    paintStats();
+    paintRef();
+
+    setBar([
+      { label:'Back',   onClick:() => backToTree() },
+      { label:'Commit', onClick:commitSheet, solid:true, grow:true, id:'commitbtn' }
+    ]);
+    refreshCommitBtn();
+
+  } catch (e) {
+    S.file = null;
+    ed.value = '';
+    ed.readOnly = true;
+    $('stat-lines').textContent = '—';
+    $('stat-bytes').textContent = '—';
+    $('stat-state').textContent = 'unreadable';
+    toast(e.message, 6000);
+    setBar([{ label:'Back', onClick:() => backToTree(), solid:true }]);
+  }
+}
+
+function backToTree(){
+  if (isDirty() && !confirm('Uncommitted changes will be lost. Leave anyway?')) return;
+  loadTree(S.path);
+}
+
+/* Keep the buffer, the stats, the dirty mark and the commit button in sync. */
+$('editor').addEventListener('input', e => {
+  S.buffer = e.target.value;
+  paintStats();
+  paintRef();
+  refreshCommitBtn();
+});
+
+/* Tab should indent, not escape the field. */
+$('editor').addEventListener('keydown', e => {
+  if (e.key !== 'Tab') return;
+  e.preventDefault();
+  const ta = e.target, s = ta.selectionStart, t = ta.selectionEnd;
+  ta.value = ta.value.slice(0, s) + '  ' + ta.value.slice(t);
+  ta.selectionStart = ta.selectionEnd = s + 2;
+  ta.dispatchEvent(new Event('input'));
+});
+
+function paintStats(){
+  const v = S.buffer;
+  $('stat-lines').textContent = (v ? v.split('\n').length : 0) + ' lines';
+  $('stat-bytes').textContent = bytes(new TextEncoder().encode(v).length);
+  $('stat-state').textContent = isDirty() ? 'modified' : 'clean';
+}
+
+function refreshCommitBtn(){
+  const b = $('commitbtn');
+  if (b) b.disabled = !isDirty();
+}
+
+
+/* ── 7. ACTIONS ───────────────────────────────────────────── */
+
+/* --- 7a. Commit ---------------------------------------------
+   The sheet deliberately shows the blob sha you are about to
+   overwrite. That sha is sent with the request; if the branch has
+   moved underneath you, GitHub returns 409 rather than clobbering.
+   ------------------------------------------------------------ */
+function commitSheet(){
+  if (!isDirty()) return;
+
+  sheet('Commit', `
+    <div class="overwrite">
+      Replacing blob <b>${S.file.sha.slice(0, 7)}</b><br>
+      on <b>${S.branch}</b> at <b>${S.file.path}</b>
+    </div>
+    <div class="field">
+      <label for="cmsg">Message</label>
+      <input type="text" id="cmsg" placeholder="Update ${S.file.path.split('/').pop()}">
+    </div>
+    <button class="btn solid wide" id="cgo">Commit to ${S.branch}</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => {
+    $('cgo').onclick = doCommit;
+    $('cmsg').addEventListener('keydown', e => { if (e.key === 'Enter') doCommit(); });
+  });
+}
+
+async function doCommit(){
+  const btn = $('cgo');
+  const msg = $('cmsg').value.trim() || ('Update ' + S.file.path.split('/').pop());
+
+  busy(btn, true, 'Committing…');
+  try {
+    const res = await api.putFile(S.repo.owner, S.repo.name, S.file.path, {
+      message: msg,
+      content: b64encode(S.buffer),
+      sha:     S.file.sha,        // ← the lock
+      branch:  S.branch
+    });
+
+    // The response hands back the NEW blob sha. Adopt it, so the next
+    // commit in this session locks against the right version.
+    S.file.sha  = res.content.sha;
+    S.file.text = S.buffer;
+
+    closeSheet();
+    paintStats(); paintRef(); refreshCommitBtn();
+    toast('Committed · ' + res.commit.sha.slice(0, 7));
+  } catch (e) {
+    toast(e.message, 6000);
+  } finally {
+    busy(btn, false);
+  }
+}
+
+
+/* --- 7b. New file ------------------------------------------- */
+function newFileSheet(){
+  const here = S.path ? S.path + '/' : '';
+  sheet('New file', `
+    <div class="field">
+      <label for="npath">Path</label>
+      <input type="text" id="npath" value="${here}" spellcheck="false">
+      <p class="hint">Slashes create folders. Git has no empty directories — the folder appears with the file.</p>
+    </div>
+    <div class="field">
+      <label for="nbody">Contents</label>
+      <textarea id="nbody" rows="6" spellcheck="false"></textarea>
+    </div>
+    <button class="btn solid wide" id="ngo">Create and commit</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => { $('ngo').onclick = doNewFile; });
+}
+
+async function doNewFile(){
+  const btn  = $('ngo');
+  const path = $('npath').value.trim().replace(/^\/+/, '');
+  if (!path || path.endsWith('/')) { toast('Give the file a name.'); return; }
+
+  busy(btn, true, 'Creating…');
+  try {
+    // No `sha` in the body ⇒ GitHub treats this as a create.
+    await api.putFile(S.repo.owner, S.repo.name, path, {
+      message: 'Add ' + path,
+      content: b64encode($('nbody').value),
+      branch:  S.branch
+    });
+    closeSheet();
+    toast('Created ' + path);
+    await loadTree(S.path);
+  } catch (e) {
+    toast(e.message, 6000);
+  } finally {
+    busy(btn, false);
+  }
+}
+
+
+/* --- 7c. New branch ----------------------------------------- */
+$('newbranch').onclick = () => {
+  sheet('New branch', `
+    <div class="field">
+      <label for="bname">Name</label>
+      <input type="text" id="bname" placeholder="fix/typo" spellcheck="false">
+      <p class="hint">Branches from <b>${S.branch}</b> at its current tip.</p>
+    </div>
+    <button class="btn solid wide" id="bgo">Create branch</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => { $('bgo').onclick = doBranch; });
+};
+
+async function doBranch(){
+  const btn  = $('bgo');
+  const name = $('bname').value.trim();
+  if (!name) { toast('Name the branch.'); return; }
+
+  busy(btn, true, 'Creating…');
+  try {
+    // A branch is a ref pointing at a commit. Read the tip, point at it.
+    const base = await api.ref(S.repo.owner, S.repo.name, S.branch);
+    await api.makeRef(S.repo.owner, S.repo.name, name, base.object.sha);
+
+    S.branch = name;
+    closeSheet();
+    await loadBranches();
+    await loadTree(S.path);
+    toast('On ' + name);
+  } catch (e) {
+    toast(e.message, 6000);
+  } finally {
+    busy(btn, false);
+  }
+}
+
+
+/* --- 7d. Pull request --------------------------------------- */
+function prSheet(){
+  sheet('Pull request', `
+    <div class="overwrite">
+      <b>${S.branch}</b> → <b>${S.repo.default_branch}</b>
+    </div>
+    <div class="field">
+      <label for="ptitle">Title</label>
+      <input type="text" id="ptitle" value="${S.branch}">
+    </div>
+    <div class="field">
+      <label for="pbody">Description</label>
+      <textarea id="pbody" rows="4"></textarea>
+    </div>
+    <button class="btn solid wide" id="pgo">Open pull request</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => { $('pgo').onclick = doPR; });
+}
+
+async function doPR(){
+  const btn = $('pgo');
+  if (S.branch === S.repo.default_branch) {
+    toast('You are on ' + S.branch + '. Switch to another branch first.');
+    return;
+  }
+
+  busy(btn, true, 'Opening…');
+  try {
+    const pr = await api.makePR(S.repo.owner, S.repo.name, {
+      title: $('ptitle').value.trim() || S.branch,
+      body:  $('pbody').value,
+      head:  S.branch,
+      base:  S.repo.default_branch
+    });
+    closeSheet();
+    toast('Opened #' + pr.number);
+  } catch (e) {
+    toast(e.message, 6000);
+  } finally {
+    busy(btn, false);
+  }
+}
+
+/* --- Warn before losing an uncommitted buffer --------------- */
+window.addEventListener('beforeunload', e => {
+  if (isDirty()) { e.preventDefault(); e.returnValue = ''; }
+});
+
+
+/* ── BOOT ─────────────────────────────────────────────────── */
+(async function boot(){
+  paintRef();
+  const saved = await store.get(TOKEN_KEY);
+  if (!saved) { setBar(null); return; }
+
+  S.token = saved;
+  try {
+    S.user = await api.me();
+    paintRef();
+    await openRepos();
+  } catch {
+    S.token = null;
+    await store.del(TOKEN_KEY);
+    show('auth');
+  }
+})();
+</script>
+</body>
+</html>
