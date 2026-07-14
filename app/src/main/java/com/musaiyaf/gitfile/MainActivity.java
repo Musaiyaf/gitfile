@@ -83,7 +83,11 @@ public class MainActivity extends Activity {
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);          // localStorage — the token lives here
         s.setDatabaseEnabled(true);
+        // Off by default; the Desktop view setting turns it on, because a
+        // desktop-width layout on a phone screen is unusable without pinch-zoom.
         s.setSupportZoom(false);
+        s.setBuiltInZoomControls(false);
+        s.setDisplayZoomControls(false);
         s.setMediaPlaybackRequiresUserGesture(false);
         // Deliberately left off: setAllowFileAccessFromFileURLs and
         // setAllowUniversalAccessFromFileURLs. See the class comment.
@@ -229,6 +233,19 @@ public class MainActivity extends Activity {
             startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
         }
 
+        /** Pinch-zoom, on only when the page is in desktop mode. */
+        @JavascriptInterface
+        public void setZoom(boolean on) {
+            runOnUiThread(() -> {
+                WebSettings st = web.getSettings();
+                st.setSupportZoom(on);
+                st.setBuiltInZoomControls(on);
+                st.setDisplayZoomControls(false);   // the +/- overlay is hideous
+                st.setUseWideViewPort(on);
+                st.setLoadWithOverviewMode(on);
+            });
+        }
+
         @JavascriptInterface
         public void copy(String text) {
             ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
@@ -307,13 +324,22 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** Back goes back through the app's own history before it leaves the app. */
+    /**
+     * Back.
+     *
+     * web.canGoBack() is useless here. The app is one page that swaps views in
+     * JavaScript, so the WebView's history is always empty — which meant every
+     * back press fell straight through to super and killed the activity, even
+     * when you were four folders deep.
+     *
+     * So ask the page. It answers true if it had somewhere to go (closed a sheet,
+     * stepped up a directory, left the editor), and only when it answers false do
+     * we actually leave.
+     */
     @Override
     public void onBackPressed() {
-        if (web.canGoBack()) {
-            web.goBack();
-        } else {
-            super.onBackPressed();
-        }
+        web.evaluateJavascript("window.appBack ? window.appBack() : false", value -> {
+            if (!"true".equals(value)) super.onBackPressed();
+        });
     }
 }
