@@ -483,6 +483,47 @@ pre.log{
 @keyframes pulse{ 0%,100%{ opacity:1 } 50%{ opacity:.25 } }
 @media (prefers-reduced-motion:reduce){ .step.live .g{ animation:none; } }
 
+/* ══ Releases ════════════════════════════════════════════════ */
+.rel{
+  border:1px solid var(--border); border-radius:var(--r);
+  padding:16px; margin-bottom:16px;
+}
+.rel .tagline{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+.rel .tag{
+  font-family:var(--mono); font-size:12px; color:var(--fg-muted);
+  border:1px solid var(--border-lit); border-radius:2em; padding:1px 8px;
+}
+.rel .title{ font-size:18px; font-weight:600; color:var(--fg); margin-bottom:6px; }
+.rel .title:hover{ color:var(--accent); }
+.rel .by{ font-size:12px; color:var(--fg-muted); }
+.rel .notes{ margin-top:12px; }
+
+.badge{
+  display:inline-block; border-radius:2em; padding:1px 8px;
+  font-size:11px; font-weight:600; line-height:18px;
+}
+.badge.latest{ background:rgba(46,160,67,.15); color:var(--green-fg); border:1px solid var(--green-fg); }
+.badge.pre   { background:rgba(210,153,34,.15); color:var(--amber);   border:1px solid var(--amber); }
+.badge.draft { background:var(--subtle); color:var(--fg-muted); border:1px solid var(--border-lit); }
+
+.assets{ border:1px solid var(--border); border-radius:var(--r); margin-top:16px; overflow:hidden; }
+.assets .ahead{
+  background:var(--inset); border-bottom:1px solid var(--border);
+  padding:10px 16px; font-size:13px; font-weight:600;
+}
+.asset{
+  display:flex; align-items:center; gap:12px; width:100%;
+  padding:12px 16px; border:0; border-top:1px solid var(--border);
+  background:none; color:var(--fg); font:inherit; text-align:left;
+}
+.asset:first-of-type{ border-top:0; }
+.asset:hover{ background:var(--subtle); }
+.asset:hover .n{ color:var(--accent); text-decoration:underline; }
+.asset .g{ flex:none; color:var(--fg-muted); }
+.asset .n{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:500; }
+.asset .s{ flex:none; font-family:var(--mono); font-size:12px; color:var(--fg-muted); }
+.asset .dl{ flex:none; font-size:11px; color:var(--fg-subtle); font-family:var(--mono); }
+
 /* ══ Artifacts ═══════════════════════════════════════════════ */
 .artbox{ border:1px solid var(--green-fg); border-radius:var(--r); overflow:hidden; margin-bottom:16px; }
 .artbox .ahead{
@@ -731,12 +772,17 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
 
     <section class="view" id="v-run"></section>
 
+    <section class="view" id="v-releases"></section>
+    <section class="view" id="v-release"></section>
+
     <section class="view" id="v-prs"></section>
 
   </main>
 
   <!-- ── Bottom action bar ────────────────────────────────── -->
   <div id="bar"><div id="barwrap"></div></div>
+
+  <input type="file" id="assetpick" style="display:none">
 
   <!-- The file pickers. Hidden; opened from the New sheet. -->
   <input type="file" id="filepick" multiple style="display:none">
@@ -832,6 +878,8 @@ const S = {
   quota:   null,   // rate-limit remaining, from response headers
   view:    'auth', // which screen is showing — the back button needs to know
   runId:   null,   // the Actions run being watched
+  rel:     null,   // the release being viewed
+  attachTo:null,   // the release a picked file is destined for
   poll:    null,   // its polling timer
   wrap:    false   // word wrap in the editor
 };
@@ -1008,6 +1056,16 @@ const api = {
   runJobs:   (o, r, id) => gh(`/repos/${o}/${r}/actions/runs/${id}/jobs`),
   artifacts: (o, r, id) => gh(`/repos/${o}/${r}/actions/runs/${id}/artifacts`),
   cancelRun: (o, r, id) => gh(`/repos/${o}/${r}/actions/runs/${id}/cancel`,  { method:'POST' }),
+
+  /* Releases. A release is a tag plus notes plus files — GitHub keeps all three
+     together, and so does this. */
+  releases:  (o, r)          => gh(`/repos/${o}/${r}/releases?per_page=30`),
+  release:   (o, r, id)      => gh(`/repos/${o}/${r}/releases/${id}`),
+  makeRelease:(o, r, body)   => gh(`/repos/${o}/${r}/releases`, { method:'POST', body }),
+  editRelease:(o, r, id, body) => gh(`/repos/${o}/${r}/releases/${id}`, { method:'PATCH', body }),
+  delRelease:(o, r, id)      => gh(`/repos/${o}/${r}/releases/${id}`, { method:'DELETE' }),
+  delAsset:  (o, r, id)      => gh(`/repos/${o}/${r}/releases/assets/${id}`, { method:'DELETE' }),
+  tags:      (o, r)          => gh(`/repos/${o}/${r}/tags?per_page=50`),
   rerun:     (o, r, id) => gh(`/repos/${o}/${r}/actions/runs/${id}/rerun`,   { method:'POST' }),
 
   delRef:    (o, r, branch) =>
@@ -1100,10 +1158,15 @@ window.appBack = () => {
       openActions();
       return true;
 
+    case 'release':
+      openReleases();
+      return true;
+
     case 'search':
     case 'log':
     case 'actions':
     case 'prs':
+    case 'releases':
       loadTree(S.path);
       return true;
 
@@ -1148,6 +1211,7 @@ const TABS = [
   { id:'code',    label:'Code',          go:() => loadTree(S.path) },
   { id:'prs',     label:'Pull requests', go:openPRs },
   { id:'actions', label:'Actions',       go:openActions },
+  { id:'releases',label:'Releases',      go:openReleases },
   { id:'search',  label:'Search',        go:openSearch },
   { id:'log',     label:'History',       go:() => openLog(null) }
 ];
@@ -1157,7 +1221,9 @@ function paintTabs(){
   if (!S.repo) { t.innerHTML = ''; return; }
 
   // As far as the tab strip is concerned, the file editor is still "Code".
-  const here = (S.view === 'tree' || S.view === 'file') ? 'code' : S.view;
+  let here = (S.view === 'tree' || S.view === 'file') ? 'code' : S.view;
+  if (here === 'run')     here = 'actions';    // a run belongs to Actions
+  if (here === 'release') here = 'releases';   // and a release to Releases
 
   t.innerHTML = '';
   TABS.forEach(tab => {
@@ -2256,15 +2322,337 @@ async function controlRun(what){
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   RELEASES
+
+   A GitHub release is three things bundled: a tag, a set of notes, and files.
+   The page shows all three, plus the badges that tell you which release people
+   should actually download.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+async function openReleases(){
+  show('releases');
+  const v = $('v-releases');
+  v.innerHTML = '<div class="empty">Loading…</div>';
+
+  setBar([
+    { label:'Back',       onClick:() => loadTree(S.path) },
+    { label:'+ Release',  onClick:newReleaseSheet, solid:true, grow:true }
+  ]);
+
+  try {
+    const rels = await api.releases(S.repo.owner, S.repo.name);
+    if (!rels.length) {
+      v.innerHTML = '<div class="empty">No releases yet.<br><br>A release turns a tag into something people can download.</div>';
+      return;
+    }
+
+    // GitHub's "Latest" is the newest published, non-draft, non-prerelease one.
+    const latest = rels.find(r => !r.draft && !r.prerelease);
+
+    v.innerHTML = '';
+    rels.forEach(r => {
+      const card = document.createElement('div');
+      card.className = 'rel';
+      card.innerHTML = `
+        <div class="tagline">
+          <span class="tag">${esc(r.tag_name)}</span>
+          ${r === latest             ? '<span class="badge latest">Latest</span>' : ''}
+          ${r.prerelease             ? '<span class="badge pre">Pre-release</span>' : ''}
+          ${r.draft                  ? '<span class="badge draft">Draft</span>' : ''}
+        </div>
+        <div class="title">${esc(r.name || r.tag_name)}</div>
+        <div class="by">${esc(r.author ? r.author.login : '')} · ${
+          r.published_at ? ago(r.published_at) : 'unpublished'
+        } · ${r.assets.length} asset${r.assets.length === 1 ? '' : 's'}</div>`;
+      card.onclick = () => openRelease(r.id);
+      v.appendChild(card);
+    });
+  } catch (e) {
+    v.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+
+/* ── One release, in full ─────────────────────────────────────────────── */
+async function openRelease(id){
+  show('release');
+  const v = $('v-release');
+  v.innerHTML = '<div class="empty">Loading…</div>';
+
+  try {
+    const r = await api.release(S.repo.owner, S.repo.name, id);
+    S.rel = r;
+
+    v.innerHTML = `
+      <div class="rel">
+        <div class="tagline">
+          <span class="tag">${esc(r.tag_name)}</span>
+          ${r.prerelease ? '<span class="badge pre">Pre-release</span>' : ''}
+          ${r.draft      ? '<span class="badge draft">Draft</span>' : ''}
+        </div>
+        <div class="title">${esc(r.name || r.tag_name)}</div>
+        <div class="by">
+          ${esc(r.author ? r.author.login : '')} released this
+          ${r.published_at ? ago(r.published_at) + ' ago' : '(unpublished draft)'}
+          · commit ${esc((r.target_commitish || '').slice(0, 7))}
+        </div>
+        ${r.body ? `<div class="notes md">${markdown(r.body)}</div>` : ''}
+      </div>
+
+      <div class="assets">
+        <div class="ahead">Assets · ${r.assets.length + 2}</div>
+        ${r.assets.map((a, i) => `
+          <button class="asset" id="as-${i}">
+            <span class="g">⤓</span>
+            <span class="n">${esc(a.name)}</span>
+            <span class="dl">${a.download_count}↓</span>
+            <span class="s">${bytes(a.size)}</span>
+          </button>`).join('')}
+
+        <!-- GitHub attaches these two to every release automatically. They are
+             not in the assets array; they are generated from the tag. -->
+        <button class="asset" id="as-zip">
+          <span class="g">⤓</span><span class="n">Source code (zip)</span><span class="s"></span>
+        </button>
+        <button class="asset" id="as-tar">
+          <span class="g">⤓</span><span class="n">Source code (tar.gz)</span><span class="s"></span>
+        </button>
+      </div>`;
+
+    r.assets.forEach((a, i) => {
+      $('as-' + i).onclick = () => assetSheet(a, r);
+    });
+
+    // The source archives are plain public URLs, so the browser handles them.
+    const src = url => () => window.Native ? window.Native.openUrl(url) : window.open(url, '_blank');
+    $('as-zip').onclick = src(r.zipball_url ? r.html_url.replace(/\/releases\/tag\/.*$/, '') + '/archive/refs/tags/' + r.tag_name + '.zip' : r.html_url);
+    $('as-tar').onclick = src(r.html_url.replace(/\/releases\/tag\/.*$/, '') + '/archive/refs/tags/' + r.tag_name + '.tar.gz');
+
+    setBar([
+      { label:'Back',   onClick:openReleases },
+      { label:'Edit',   onClick:() => editReleaseSheet(r) },
+      { label:'Attach', onClick:() => attachSheet(r), solid:true, grow:true }
+    ]);
+
+  } catch (e) {
+    v.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    setBar([{ label:'Back', onClick:openReleases, solid:true }]);
+  }
+}
+
+/* ── An asset: download it, install it, or delete it ──────────────────── */
+function assetSheet(a, r){
+  sheet(a.name, `
+    <div class="overwrite">
+      ${bytes(a.size)} · downloaded ${a.download_count} time${a.download_count === 1 ? '' : 's'}<br>
+      ${esc(a.content_type)}
+    </div>
+    <button class="btn solid wide" id="a-dl">Download</button>
+    <div style="height:10px"></div>
+    <div class="sheetlist">
+      <button id="a-del" class="danger">Delete asset<small>Removes the file from this release</small></button>
+    </div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => {
+    $('a-dl').onclick = () => {
+      if (!window.Native || !window.Native.download) {
+        window.open(a.browser_download_url, '_blank');
+        return;
+      }
+      // An asset is the file itself, not a zip around it — hence unzip = false.
+      // And it needs octet-stream, or GitHub returns the asset's JSON metadata.
+      downloadNative({
+        url: a.url,
+        accept: 'application/octet-stream',
+        name: a.name,
+        unzip: false,
+        size: a.size,
+        label: a.name
+      });
+    };
+
+    $('a-del').onclick = async () => {
+      if (!confirm('Delete ' + a.name + ' from this release?')) return;
+      try {
+        await api.delAsset(S.repo.owner, S.repo.name, a.id);
+        closeSheet();
+        toast('Deleted ' + a.name);
+        openRelease(r.id);
+      } catch (e) { toast(e.message, 6000); }
+    };
+  });
+}
+
+/* ── Attach a file to a release ───────────────────────────────────────── */
+function attachSheet(r){
+  if (!window.Native || !window.Native.uploadAsset) {
+    toast('Attaching files needs the app.', 5000);
+    return;
+  }
+  S.attachTo = r;
+  $('assetpick').click();
+}
+
+async function takeAsset(files){
+  const f = files[0];
+  if (!f) return;
+  const r = S.attachTo;
+
+  sheet('Attach', `
+    <div class="overwrite"><b>${esc(f.name)}</b><br>${bytes(f.size)} → ${esc(r.tag_name)}</div>
+    <div class="bar"><i id="abar" style="width:35%"></i></div>
+    <div class="barstat"><span class="now" id="anow">Uploading…</span><span></span></div>
+    <div style="height:16px"></div>
+    <button class="btn wide" id="aclose">Close</button>
+  `, () => { $('aclose').onclick = closeSheet; });
+
+  window.onAssetUploaded = (name, err) => {
+    if (!$('abar')) return;
+    if (err) { $('anow').textContent = err; return; }
+    $('abar').style.width = '100%';
+    $('anow').textContent = 'Attached ' + name;
+    setTimeout(() => { closeSheet(); openRelease(r.id); }, 700);
+  };
+
+  try {
+    const b64 = await fileToB64(f);
+    window.Native.uploadAsset(
+      r.upload_url, S.token, f.name,
+      f.type || 'application/octet-stream', b64);
+  } catch (e) {
+    toast(e.message, 6000);
+  }
+}
+
+/* ── Create a release ─────────────────────────────────────────────────── */
+function newReleaseSheet(){
+  sheet('New release', `
+    <div class="field">
+      <label for="rl-tag">Tag</label>
+      <input type="text" id="rl-tag" placeholder="v1.0.0" spellcheck="false">
+      <p class="hint">Created on <b>${esc(S.branch)}</b> if it does not exist yet.</p>
+    </div>
+    <div class="field">
+      <label for="rl-name">Title</label>
+      <input type="text" id="rl-name" placeholder="Optional — defaults to the tag">
+    </div>
+    <div class="field">
+      <label for="rl-body">Notes</label>
+      <textarea id="rl-body" rows="4" placeholder="Markdown"></textarea>
+    </div>
+    <div class="field">
+      <label class="check"><input type="checkbox" id="rl-gen" checked><span class="box"></span>
+        Generate notes from commits</label>
+      <label class="check"><input type="checkbox" id="rl-pre"><span class="box"></span>
+        Pre-release</label>
+      <label class="check"><input type="checkbox" id="rl-draft"><span class="box"></span>
+        Draft</label>
+    </div>
+    <button class="btn solid wide" id="rl-go">Publish release</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => { $('rl-go').onclick = doNewRelease; });
+}
+
+async function doNewRelease(){
+  const btn = $('rl-go');
+  const tag = $('rl-tag').value.trim();
+  if (!tag) { toast('A release needs a tag.'); return; }
+
+  busy(btn, true, 'Publishing…');
+  try {
+    const rel = await api.makeRelease(S.repo.owner, S.repo.name, {
+      tag_name:         tag,
+      target_commitish: S.branch,
+      name:             $('rl-name').value.trim() || tag,
+      body:             $('rl-body').value,
+      draft:            $('rl-draft').checked,
+      prerelease:       $('rl-pre').checked,
+      // GitHub writes the changelog from the commits since the last tag. It is
+      // better at it than you will be at 11pm on a phone.
+      generate_release_notes: $('rl-gen').checked
+    });
+    closeSheet();
+    toast('Released ' + tag);
+    openRelease(rel.id);
+  } catch (e) {
+    toast(e.status === 422 ? 'That tag already has a release.' : e.message, 6000);
+  } finally {
+    busy(btn, false);
+  }
+}
+
+/* ── Edit or delete ───────────────────────────────────────────────────── */
+function editReleaseSheet(r){
+  sheet('Edit release', `
+    <div class="field">
+      <label for="re-name">Title</label>
+      <input type="text" id="re-name" value="${esc(r.name || '')}">
+    </div>
+    <div class="field">
+      <label for="re-body">Notes</label>
+      <textarea id="re-body" rows="6">${esc(r.body || '')}</textarea>
+    </div>
+    <div class="field">
+      <label class="check"><input type="checkbox" id="re-pre" ${r.prerelease ? 'checked' : ''}><span class="box"></span>
+        Pre-release</label>
+      <label class="check"><input type="checkbox" id="re-draft" ${r.draft ? 'checked' : ''}><span class="box"></span>
+        Draft</label>
+    </div>
+    <button class="btn solid wide" id="re-go">Save</button>
+    <div style="height:10px"></div>
+    <div class="sheetlist">
+      <button id="re-del" class="danger">Delete release<small>The tag survives — only the release is removed</small></button>
+    </div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => {
+    $('re-go').onclick = async () => {
+      const btn = $('re-go');
+      busy(btn, true, 'Saving…');
+      try {
+        await api.editRelease(S.repo.owner, S.repo.name, r.id, {
+          name:       $('re-name').value.trim(),
+          body:       $('re-body').value,
+          draft:      $('re-draft').checked,
+          prerelease: $('re-pre').checked
+        });
+        closeSheet();
+        toast('Saved');
+        openRelease(r.id);
+      } catch (e) { toast(e.message, 6000); }
+      finally { busy(btn, false); }
+    };
+
+    $('re-del').onclick = async () => {
+      if (!confirm('Delete the release ' + r.tag_name + '?')) return;
+      try {
+        await api.delRelease(S.repo.owner, S.repo.name, r.id);
+        closeSheet();
+        toast('Deleted ' + r.tag_name);
+        openReleases();
+      } catch (e) { toast(e.message, 6000); }
+    };
+  });
+}
+
 /* ── Downloading an artifact ──────────────────────────────────────────────
    GitHub always wraps an artifact in a ZIP, even a single APK. Java pulls the
    APK out and hands it to Android's package installer, which is the last step
    that used to require leaving the app.
    ──────────────────────────────────────────────────────────────────────── */
-function downloadArtifact(a){
+const downloadArtifact = a => downloadNative({
+  url:    a.archive_download_url,
+  accept: 'application/vnd.github+json',
+  name:   a.name,
+  unzip:  true,                      // every GitHub artifact is a zip
+  size:   a.size_in_bytes,
+  label:  a.name
+});
+
+function downloadNative(a){
   sheet('Download', `
     <div class="overwrite">
-      <b>${esc(a.name)}</b><br>${bytes(a.size_in_bytes)}
+      <b>${esc(a.label)}</b><br>${bytes(a.size)}
     </div>
     <div class="bar"><i id="dbar"></i></div>
     <div class="barstat">
@@ -2312,7 +2700,7 @@ function downloadArtifact(a){
     $('dclose').textContent = 'Close';
   };
 
-  window.Native.download(a.archive_download_url, S.token);
+  window.Native.download(a.url, S.token, a.accept, a.name, a.unzip);
 }
 
 /* ── Job logs ─────────────────────────────────────────────────────────────
@@ -3273,6 +3661,11 @@ function paintBackend(){
         catch { return 'memory only (will not survive a restart)'; }
       })();
 }
+
+$('assetpick').addEventListener('change', e => {
+  takeAsset(e.target.files);
+  e.target.value = '';        // so picking the same file twice still fires
+});
 
 (async function boot(){
   paintBackend();
