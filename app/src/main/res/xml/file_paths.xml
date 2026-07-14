@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Downloaded artifacts land here. Handing Android's installer a raw
+         file:// path throws FileUriExposedException on anything modern, so the
+         APK is served through a FileProvider instead. -->
+    <cache-path name="downloads" path="dl/" />
+</paths>
