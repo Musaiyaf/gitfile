@@ -52,4 +52,8 @@ dependencies {
     // WebViewAssetLoader — lets the WebView serve the bundled HTML from a real
     // https origin instead of file://, so CORS and localStorage behave normally.
     implementation 'androidx.webkit:webkit:1.12.1'
+
+    // The Storage Access Framework's folder picker. Android has no other way to
+    // let the user choose a directory.
+    implementation 'androidx.documentfile:documentfile:1.0.1'
 }
