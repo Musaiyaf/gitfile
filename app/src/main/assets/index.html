@@ -441,7 +441,23 @@ input.masked.plain{ -webkit-text-security:none; letter-spacing:0; }
   background:var(--inset); border-bottom:1px solid var(--border);
   padding:10px 16px; font-size:13px; font-weight:600;
 }
-.jobbox .jhead .when{ margin-left:auto; font-family:var(--mono); font-size:11px; color:var(--fg-muted); font-weight:400; }
+.jobbox .jhead{ width:100%; text-align:left; cursor:pointer; }
+.jobbox .jhead:hover{ background:var(--subtle); }
+.jobbox .jhead .g{ width:16px; flex:none; text-align:center; font-size:11px; color:var(--fg-muted); }
+.jobbox .jhead .g.live{ color:var(--amber); animation:pulse 1.4s ease-in-out infinite; }
+.jobbox .jhead .jn{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.jobbox .jhead .when{ font-family:var(--mono); font-size:11px; color:var(--fg-muted); font-weight:400; flex:none; }
+.jobbox .jhead .chev{ color:var(--accent); font-size:12px; font-weight:500; flex:none; }
+
+pre.log{
+  background:var(--canvas);
+  border:1px solid var(--border); border-radius:var(--r);
+  padding:12px;
+  max-height:60vh; overflow:auto;
+  font-family:var(--mono); font-size:11px; line-height:1.6;
+  color:var(--fg-muted); white-space:pre;
+  margin-bottom:16px;
+}
 
 .step{
   display:flex; align-items:center; gap:10px;
@@ -980,6 +996,14 @@ const api = {
                gh(`/repos/${o}/${r}/actions/workflows/${id}/dispatches`,
                   { method:'POST', body:{ ref } }),
 
+  /* The contents API stops returning content above 1 MB. The blobs API does not
+     — it goes to 100 MB. Reach for it whenever contents comes back empty. */
+  blob:      (o, r, sha) => gh(`/repos/${o}/${r}/git/blobs/${sha}`),
+
+  /* One call gives every path on the branch. Used to spot upload collisions
+     without asking about each directory in turn. */
+  tree:      (o, r, ref) => gh(`/repos/${o}/${r}/git/trees/${enc(ref)}?recursive=1`),
+
   run:       (o, r, id) => gh(`/repos/${o}/${r}/actions/runs/${id}`),
   runJobs:   (o, r, id) => gh(`/repos/${o}/${r}/actions/runs/${id}/jobs`),
   artifacts: (o, r, id) => gh(`/repos/${o}/${r}/actions/runs/${id}/artifacts`),
@@ -1503,8 +1527,16 @@ async function openFile(path){
   try {
     const f = await api.contents(S.repo.owner, S.repo.name, path, S.branch);
 
+    // Over 1 MB, the contents API returns the metadata but blanks the content.
+    // The sha it hands back is the way through: fetch the blob directly.
     if (f.content === undefined || f.content === '') {
-      throw new Error('File is over 1 MB. The contents API will not return it.');
+      if (!f.sha) throw new Error('GitHub returned no content for this file.');
+      if (f.size > 4 * 1024 * 1024) {
+        throw new Error(`${bytes(f.size)} is too large to open in a phone editor.`);
+      }
+      const blob = await api.blob(S.repo.owner, S.repo.name, f.sha);
+      f.content = blob.content;
+      if (!f.content) throw new Error('GitHub returned no content for this file.');
     }
 
     // ── Images: show them, don't refuse them. ──────────────────────────────
@@ -1717,9 +1749,27 @@ async function doCommit(){
       toast('Moved · ' + c.sha.slice(0, 7));
 
     } else {
+      const b64 = b64encode(S.buffer);
+
+      // The contents API refuses a body over about 1 MB, the same ceiling that
+      // stops it reading one. Past that, commit through the tree plumbing — which
+      // has no such limit, but also no sha lock, so a concurrent edit would be
+      // silently overwritten. On a personal repo that trade is worth making; it
+      // is the difference between saving the file and not.
+      if (b64.length > 900000) {
+        const c = await commitFiles([{ path: S.file.path, b64 }], msg);
+        const f = await api.contents(S.repo.owner, S.repo.name, S.file.path, S.branch);
+        S.file.sha  = f.sha;
+        S.file.text = S.buffer;
+        closeSheet();
+        paintStats(); paintRef(); refreshCommitBtn();
+        toast('Committed · ' + c.sha.slice(0, 7));
+        return;
+      }
+
       const res = await api.putFile(S.repo.owner, S.repo.name, S.file.path, {
         message: msg,
-        content: b64encode(S.buffer),
+        content: b64,
         sha:     S.file.sha,        // ← the lock
         branch:  S.branch
       });
@@ -2107,10 +2157,12 @@ async function tickRun(){
       const [jc, jg] = stepClass(j);
       html += `
         <div class="jobbox">
-          <div class="jhead"><span class="step ${jc}" style="padding:0;border:0"><span class="g">${jg}</span></span>
-            ${esc(j.name)}
+          <button class="jhead" id="job-${j.id}">
+            <span class="g ${jc === 'live' ? 'live' : ''}">${jg}</span>
+            <span class="jn">${esc(j.name)}</span>
             <span class="when">${secs(j.started_at, j.completed_at)}</span>
-          </div>
+            <span class="chev">log ›</span>
+          </button>
           ${(j.steps || []).map(st => {
             const [c, g] = stepClass(st);
             return `<div class="step ${c}">
@@ -2144,14 +2196,26 @@ async function tickRun(){
 
     $('v-run').innerHTML = html;
 
-    // Artifact downloads are authenticated and redirect to blob storage, which
-    // sends no CORS headers — the WebView cannot fetch them. The browser can,
-    // because you are already signed in to GitHub there.
-    document.querySelectorAll('.art').forEach(el => {
-      el.onclick = () => window.Native
-        ? window.Native.openUrl(run.html_url)
-        : window.open(run.html_url, '_blank');
+    jobs.forEach(j => {
+      const el = $('job-' + j.id);
+      if (el) el.onclick = () => openLogs(j);
     });
+
+    // Artifacts download inside the app now. The fetch, the unzip and the install
+    // all happen natively, because the download URL 302s to blob storage and blob
+    // storage sends no CORS header — a WebView simply cannot follow it.
+    if (!running) {
+      try {
+        const { artifacts } = await api.artifacts(o, r, id);
+        artifacts.filter(a => !a.expired).forEach((a, i) => {
+          const el = $('art-' + i);
+          if (!el) return;
+          el.onclick = () => (window.Native && window.Native.download)
+            ? downloadArtifact(a)
+            : (window.open(run.html_url, '_blank'));
+        });
+      } catch { /* the list already rendered; nothing to wire */ }
+    }
 
     setBar([
       { label:'Back',   onClick:openActions },
@@ -2190,6 +2254,106 @@ async function controlRun(what){
   } catch (e) {
     toast(e.status === 403 ? 'The token cannot control workflows. Set Actions to read and write.' : e.message, 6000);
   }
+}
+
+/* ── Downloading an artifact ──────────────────────────────────────────────
+   GitHub always wraps an artifact in a ZIP, even a single APK. Java pulls the
+   APK out and hands it to Android's package installer, which is the last step
+   that used to require leaving the app.
+   ──────────────────────────────────────────────────────────────────────── */
+function downloadArtifact(a){
+  sheet('Download', `
+    <div class="overwrite">
+      <b>${esc(a.name)}</b><br>${bytes(a.size_in_bytes)}
+    </div>
+    <div class="bar"><i id="dbar"></i></div>
+    <div class="barstat">
+      <span class="now" id="dnow">Starting…</span>
+      <span id="dpct">0%</span>
+    </div>
+    <div style="height:16px"></div>
+    <div id="dact"></div>
+    <button class="btn wide" id="dclose">Cancel</button>
+  `, () => { $('dclose').onclick = closeSheet; });
+
+  window.onDownloadProgress = pct => {
+    const p = Number(pct);
+    if ($('dbar')) { $('dbar').style.width = p + '%'; $('dpct').textContent = p + '%'; }
+    if ($('dnow')) $('dnow').textContent = 'Downloading…';
+  };
+
+  window.onDownloadDone = (kind, path, name) => {
+    if (!$('dbar')) return;                 // the sheet was closed mid-download
+    $('dbar').style.width = '100%';
+    $('dpct').textContent = '100%';
+
+    if (kind === 'apk') {
+      $('dnow').textContent = name;
+      $('dact').innerHTML = `<button class="btn solid wide" id="dinstall">Install ${esc(name)}</button><div style="height:10px"></div>`;
+      $('dinstall').onclick = () => window.Native.install(path);
+      $('dclose').textContent = 'Close';
+
+      // Android will refuse this the first time until gitfile is allowed to
+      // install apps. Say so before they hit a wall they don't understand.
+      $('dnow').insertAdjacentHTML('afterend', '');
+      toast('Android will ask you to allow gitfile to install apps.', 6000);
+
+    } else {
+      $('dnow').textContent = 'Saved to Downloads';
+      $('dact').innerHTML = `<div class="overwrite">${esc(name)}<br>in your Downloads folder</div>`;
+      $('dclose').textContent = 'Close';
+    }
+  };
+
+  window.onDownloadError = msg => {
+    if (!$('dnow')) return;
+    $('dnow').textContent = msg;
+    $('dbar').style.background = 'var(--del-bg)';
+    $('dclose').textContent = 'Close';
+  };
+
+  window.Native.download(a.archive_download_url, S.token);
+}
+
+/* ── Job logs ─────────────────────────────────────────────────────────────
+   The run screen tells you WHICH step failed. This tells you why — which is the
+   only reason you were leaving the app for the browser.
+
+   The fetch happens natively: GitHub's log endpoint redirects to blob storage,
+   and blob storage sends no CORS header, so the WebView cannot follow it.
+   ──────────────────────────────────────────────────────────────────────── */
+function openLogs(job){
+  if (!window.Native || !window.Native.fetchLog) {
+    toast('Logs need the app — the browser cannot fetch them.', 5000);
+    return;
+  }
+
+  sheet('Log · ' + job.name, '<div class="empty">Fetching…</div>');
+
+  window.onJobLog = (text, err) => {
+    if (err) { $('sheetbody').innerHTML = `<div class="empty">${esc(err)}</div>`; return; }
+
+    // Strip the leading ISO timestamp GitHub stamps on every line — it is the
+    // same 28 characters over and over, and on a phone it costs half the width.
+    const clean = text
+      .split('\n')
+      .map(l => l.replace(/^\d{4}-\d\d-\d\dT[\d:.]+Z\s?/, ''))
+      .join('\n')
+      .replace(/\x1b\[[0-9;]*m/g, '');          // and the ANSI colour codes
+
+    $('sheetbody').innerHTML = `
+      <pre class="log">${esc(clean)}</pre>
+      <button class="btn wide" onclick="closeSheet()">Close</button>`;
+
+    // The end of a log is the part you came for.
+    const el = $('sheetbody').querySelector('.log');
+    el.scrollTop = el.scrollHeight;
+  };
+
+  window.Native.fetchLog(
+    `${API}/repos/${S.repo.owner}/${S.repo.name}/actions/jobs/${job.id}/logs`,
+    S.token,
+    'onJobLog');
 }
 
 /* ── Pull requests ───────────────────────────────────────────────────── */
@@ -2425,7 +2589,9 @@ async function takeFiles(files){
       const rel = f.webkitRelativePath || f.name;
       entries.push({ path: here + rel, b64: await fileToB64(f) });
     }
-    uploadSheet(entries);
+
+    const final = await checkCollisions(entries);
+    if (final) uploadSheet(final);
   } catch (e) {
     toast(e.message, 6000);
   }
@@ -2454,11 +2620,13 @@ window.onFolderPicked = (json) => {
   // No bytes yet — only paths and sizes. Each file is read from the device at the
   // moment it is uploaded, so a big folder never has to fit in memory at once.
   const here = S.path ? S.path + '/' : '';
-  uploadSheet(files.map(f => ({
+  const entries = files.map(f => ({
     path:  here + f.path,
     size:  f.size,
     index: f.index          // the handle MainActivity reads it back by
-  })));
+  }));
+
+  checkCollisions(entries).then(final => { if (final) uploadSheet(final); });
 };
 
 /* Pull one file's bytes across the bridge. The setTimeout matters: the native read
@@ -2472,6 +2640,87 @@ function nativeB64(index){
       else res(b64);
     }, 0);
   });
+}
+
+/* ── Collisions ───────────────────────────────────────────────────────────
+   Uploading over an existing file destroys it, and git will not warn you — the
+   commit just replaces the blob. So look first.
+
+   One call to the tree API returns every path on the branch, which covers a
+   nested folder upload as cheaply as a single file. Asking per directory would
+   be one request per folder.
+   ──────────────────────────────────────────────────────────────────────── */
+async function checkCollisions(entries){
+  let existing;
+  try {
+    const t = await api.tree(S.repo.owner, S.repo.name, S.branch);
+    existing = new Set(t.tree.filter(n => n.type === 'blob').map(n => n.path));
+  } catch {
+    return entries;      // an empty repo has no tree; nothing can collide
+  }
+
+  const clashes = entries.filter(e => existing.has(e.path));
+  if (!clashes.length) return entries;
+
+  return new Promise(resolve => {
+    const n = clashes.length;
+
+    sheet(n === 1 ? 'File already exists' : n + ' files already exist', `
+      <div class="overwrite">
+        ${clashes.slice(0, 8).map(c => esc(c.path)).join('<br>')}
+        ${n > 8 ? `<br><span style="color:var(--fg-subtle)">…and ${n - 8} more</span>` : ''}
+      </div>
+
+      <div class="sheetlist">
+        <button id="x-replace">Replace<small>Overwrite ${n === 1 ? 'it' : 'them'}. The old version stays in the history.</small></button>
+        <button id="x-keep">Keep both<small>Upload as ${esc(freeName(clashes[0].path, existing))} and so on</small></button>
+        <button id="x-skip" class="danger">Skip<small>Do not upload ${n === 1 ? 'this file' : 'these ' + n} — upload the rest</small></button>
+      </div>
+      <button class="btn wide" id="x-cancel">Cancel everything</button>
+    `, () => {
+      const clash = new Set(clashes.map(c => c.path));
+
+      $('x-replace').onclick = () => { closeSheet(); resolve(entries); };
+
+      $('x-keep').onclick = () => {
+        closeSheet();
+        // Rename as we go, and remember each new name — otherwise two files that
+        // both want "notes-1.txt" would collide with each other.
+        const taken = new Set(existing);
+        resolve(entries.map(e => {
+          if (!clash.has(e.path)) return e;
+          const path = freeName(e.path, taken);
+          taken.add(path);
+          return { ...e, path };
+        }));
+      };
+
+      $('x-skip').onclick = () => {
+        closeSheet();
+        const keep = entries.filter(e => !clash.has(e.path));
+        if (!keep.length) { toast('Nothing left to upload.'); resolve(null); return; }
+        resolve(keep);
+      };
+
+      $('x-cancel').onclick = () => { closeSheet(); resolve(null); };
+    });
+  });
+}
+
+/* notes.txt → notes-1.txt → notes-2.txt … the first one nobody has taken. */
+function freeName(path, taken){
+  const slash = path.lastIndexOf('/');
+  const dir   = slash < 0 ? '' : path.slice(0, slash + 1);
+  const file  = path.slice(slash + 1);
+  const dot   = file.lastIndexOf('.');
+  const stem  = dot > 0 ? file.slice(0, dot) : file;
+  const ext   = dot > 0 ? file.slice(dot)    : '';
+
+  for (let i = 1; i < 1000; i++) {
+    const candidate = `${dir}${stem}-${i}${ext}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return `${dir}${stem}-${Date.now()}${ext}`;
 }
 
 function uploadSheet(entries){
