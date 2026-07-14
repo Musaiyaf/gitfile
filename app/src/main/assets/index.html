@@ -92,6 +92,28 @@ body{
 
 #quota{ color:var(--dim); font-size:10.5px; white-space:nowrap; }
 
+#gear{
+  background:none; border:0; padding:0 0 0 10px;
+  color:var(--dim); font-size:14px; line-height:1;
+  flex:none; cursor:pointer;
+}
+#gear:hover, #gear:focus-visible{ color:var(--pure); }
+
+/* ── Desktop view ─────────────────────────────────────────────
+   The viewport meta is switched to a fixed 1024px width, so the WebView lays the
+   page out as a desktop browser would and then scales it down — exactly what
+   "Desktop site" does in Chrome. These rules undo the phone-first constraints so
+   the extra width is actually used.
+   ──────────────────────────────────────────────────────────── */
+body.desktop #app{ max-width:none; border:0; }
+body.desktop main{ padding-bottom:64px; }
+body.desktop #bar{ padding:8px 20px; }
+body.desktop #barwrap{ max-width:none; }
+body.desktop .row{ min-height:34px; padding:6px 20px; }
+body.desktop #refline{ padding:8px 20px; }
+body.desktop .pad, body.desktop h1{ padding-left:20px; padding-right:20px; }
+body.desktop #sheetbox{ max-width:640px; }
+
 /* ── Views ───────────────────────────────────────────────────── */
 main{ flex:1; padding-bottom:96px; }
 .view{ display:none; }
@@ -331,20 +353,72 @@ input.masked.plain{ -webkit-text-security:none; text-security:none; letter-spaci
 .hint a{ color:var(--text); }
 
 /* ── Editor ──────────────────────────────────────────────────── */
-#editor{
-  width:100%;
+/* ── The editor: two stacked layers ───────────────────────────
+   Every one of these properties must be identical on both, or the highlighted
+   text drifts out from under the characters you are typing.
+   ──────────────────────────────────────────────────────────── */
+#edwrap{
+  position:relative;
   min-height:52vh;
-  padding:14px;
+  border-top:1px solid var(--rule);
+  border-bottom:1px solid var(--rule);
   background:var(--void);
-  color:var(--text);
-  border:0; border-top:1px solid var(--rule); border-bottom:1px solid var(--rule);
-  font-family:var(--mono); font-size:13px; line-height:1.65;
-  white-space:pre; overflow-wrap:normal; overflow-x:auto;
-  tab-size:2;
-  resize:vertical;
 }
+
+#editor, #hl{
+  margin:0;
+  padding:14px;
+  border:0;
+  font-family:var(--mono);
+  font-size:13px;
+  line-height:1.65;
+  letter-spacing:normal;
+  white-space:pre;
+  overflow-wrap:normal;
+  tab-size:2;
+  box-sizing:border-box;
+}
+
+#hl{
+  position:absolute; inset:0;
+  overflow:hidden;                /* scrolled programmatically, in step */
+  pointer-events:none;
+  color:var(--text);
+  background:var(--void);
+}
+#hl code{ font:inherit; }
+
+#editor{
+  position:relative;              /* sits on top of #hl */
+  width:100%; height:100%;
+  min-height:52vh;
+  overflow:auto;
+  resize:none;
+  background:transparent;
+  color:transparent;              /* the <pre> underneath is what you see */
+  caret-color:var(--pure);
+  -webkit-text-fill-color:transparent;
+}
+#editor::selection{ background:var(--rule-lit); -webkit-text-fill-color:var(--pure); }
 #editor:focus{ outline:none; }
-#editor[readonly]{ color:var(--dim); }
+
+/* When the file cannot be highlighted, fall back to plain readable text. */
+#editor.plain{ color:var(--text); -webkit-text-fill-color:var(--text); }
+#editor.plain + #hl, #hl.off{ display:none; }
+#editor[readonly]{ caret-color:transparent; }
+
+/* ── Tokens ───────────────────────────────────────────────────
+   The app has no colour, so the scale is grey plus weight. It reads as
+   hierarchy rather than decoration, which is what highlighting is for anyway.
+   ──────────────────────────────────────────────────────────── */
+.t-key { color:#FFFFFF; font-weight:600; }
+.t-str { color:#B4B4B4; }
+.t-num { color:#FFFFFF; }
+.t-com { color:#5A5A5A; font-style:italic; }
+.t-fn  { color:#FFFFFF; }
+.t-pun { color:#7A7A7A; }
+.t-tag { color:#FFFFFF; font-weight:600; }
+.t-att { color:#B4B4B4; }
 
 #editstat{
   display:flex; gap:16px;
@@ -448,6 +522,7 @@ input.masked.plain{ -webkit-text-security:none; text-security:none; letter-spaci
     <div class="coord" id="coord"><span class="dim">not signed in</span></div>
     <span id="dirty">■</span>
     <span id="quota"></span>
+    <button id="gear" aria-label="Settings">⚙</button>
   </div>
 
   <main>
@@ -527,7 +602,14 @@ input.masked.plain{ -webkit-text-security:none; text-security:none; letter-spaci
         <span id="stat-state">clean</span>
       </div>
 
-      <textarea id="editor" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"></textarea>
+      <!-- The textarea's own text is transparent; what you read is the <pre>
+           behind it, syntax-highlighted. A textarea cannot colour its own
+           contents — this is the only way to do it without replacing the editor
+           with a full component like CodeMirror. -->
+      <div id="edwrap">
+        <pre id="hl" aria-hidden="true"><code></code></pre>
+        <textarea id="editor" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"></textarea>
+      </div>
       <div id="preview" class="md" style="display:none"></div>
       <div id="imgview" style="display:none"></div>
     </section>
@@ -642,7 +724,9 @@ const S = {
   path:    '',     // current directory path ('' = repo root)
   file:    null,   // { path, sha, text } — the open blob
   buffer:  '',     // what's in the editor right now
-  quota:   null    // rate-limit remaining, from response headers
+  quota:   null,   // rate-limit remaining, from response headers
+  view:    'auth', // which screen is showing — the back button needs to know
+  wrap:    false   // word wrap in the editor
 };
 
 /* The editor is dirty when the buffer differs from the fetched blob. */
@@ -795,6 +879,15 @@ const api = {
 
   /* Actions. The runs list is how the app watches itself being built. */
   runs:      (o, r)        => gh(`/repos/${o}/${r}/actions/runs?per_page=20`),
+  workflows: (o, r)        => gh(`/repos/${o}/${r}/actions/workflows`),
+
+  /* Fire a workflow_dispatch. Needs the token's Actions permission at read AND
+     write — read-only is enough to watch runs, not to start one. Returns 204,
+     with no body: GitHub is telling you it queued the request, not that the run
+     succeeded. */
+  dispatch:  (o, r, id, ref) =>
+               gh(`/repos/${o}/${r}/actions/workflows/${id}/dispatches`,
+                  { method:'POST', body:{ ref } }),
 
   delRef:    (o, r, branch) =>
                gh(`/repos/${o}/${r}/git/refs/heads/${enc(branch)}`, { method:'DELETE' })
@@ -858,8 +951,48 @@ const $ = id => document.getElementById(id);
 function show(view){
   document.querySelectorAll('.view').forEach(v => v.classList.remove('on'));
   $('v-' + view).classList.add('on');
+  S.view = view;
   window.scrollTo(0, 0);
 }
+
+/* ── Android's back button ────────────────────────────────────────────────
+   MainActivity asks this before it closes the app. Return true if we handled it.
+
+   There is no history stack because there is no navigation — the app swaps views
+   in place. So instead of replaying history, back walks the hierarchy the user
+   can actually see: sheet → editor → folder → parent folder → repo list → out.
+   ──────────────────────────────────────────────────────────────────────── */
+window.appBack = () => {
+  // A sheet is always the topmost thing.
+  if ($('sheet').classList.contains('on')) { closeSheet(); return true; }
+
+  switch (S.view) {
+    case 'file':
+      backToTree();
+      return true;
+
+    case 'search':
+    case 'log':
+    case 'actions':
+    case 'prs':
+      loadTree(S.path);
+      return true;
+
+    case 'tree':
+      if (S.path) {
+        // Up one directory, rather than all the way out of the repo.
+        loadTree(S.path.split('/').slice(0, -1).join('/'));
+        return true;
+      }
+      openRepos();
+      return true;
+
+    case 'repos':
+    case 'auth':
+    default:
+      return false;      // nothing left — let Android close the app
+  }
+};
 
 /* The ref line — prints exactly where you are, in git's own terms. */
 function paintRef(){
@@ -1228,6 +1361,7 @@ async function openFile(path){
     filePane('edit');
     paintPath();
     paintStats();
+    paintHL(true);        // immediately on open, not after a debounce
     paintRef();
 
     setBar([
@@ -1309,6 +1443,7 @@ function backToTree(){
 $('editor').addEventListener('input', e => {
   S.buffer = e.target.value;
   paintStats();
+  paintHL();
   paintRef();
   refreshCommitBtn();
 });
@@ -1617,7 +1752,8 @@ async function openActions(){
   v.innerHTML = '<div class="empty">Loading…</div>';
   setBar([
     { label:'Back',    onClick:() => loadTree(S.path) },
-    { label:'Refresh', onClick:openActions, solid:true, grow:true }
+    { label:'Refresh', onClick:openActions },
+    { label:'Run',     onClick:runSheet, solid:true, grow:true }
   ]);
 
   try {
@@ -1645,6 +1781,60 @@ async function openActions(){
     });
   } catch (e) {
     v.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+
+/* ── Start a workflow ────────────────────────────────────────────────────
+   The loop closes here: edit a file, commit it, run the build, watch the dot go
+   green, tap through and install the APK — without leaving the app that is
+   building itself.
+   ──────────────────────────────────────────────────────────────────────── */
+async function runSheet(){
+  sheet('Run workflow', '<div class="empty">Loading…</div>');
+
+  try {
+    const { workflows } = await api.workflows(S.repo.owner, S.repo.name);
+    const active = workflows.filter(w => w.state === 'active');
+
+    if (!active.length) {
+      $('sheetbody').innerHTML = '<div class="empty">No workflows in this repository.</div>';
+      return;
+    }
+
+    $('sheetbody').innerHTML = `
+      <div class="overwrite">Runs against <b>${S.branch}</b></div>
+      <div class="sheetlist">
+        ${active.map((w, i) => `
+          <button id="w-${i}">${esc(w.name)}<small>${esc(w.path.replace('.github/workflows/', ''))}</small></button>
+        `).join('')}
+      </div>
+      <button class="btn wide" onclick="closeSheet()">Cancel</button>`;
+
+    active.forEach((w, i) => {
+      $('w-' + i).onclick = async () => {
+        const btn = $('w-' + i);
+        busy(btn, true, 'Starting…');
+        try {
+          await api.dispatch(S.repo.owner, S.repo.name, w.id, S.branch);
+          closeSheet();
+          toast('Started ' + w.name + ' on ' + S.branch);
+
+          // GitHub queues the run asynchronously — ask again in a moment or the
+          // list still shows only the previous run and it looks like nothing
+          // happened.
+          setTimeout(openActions, 2500);
+        } catch (e) {
+          toast(e.status === 403
+            ? 'The token cannot start workflows. Set Actions to read and write.'
+            : e.status === 404
+              ? 'This workflow has no workflow_dispatch trigger, so it cannot be started by hand.'
+              : e.message, 6000);
+          busy(btn, false);
+        }
+      };
+    });
+  } catch (e) {
+    $('sheetbody').innerHTML = `<div class="empty">${esc(e.message)}</div>`;
   }
 }
 
@@ -1763,8 +1953,9 @@ function newRepoSheet(){
       <input type="text" id="rdesc" placeholder="optional">
     </div>
     <div class="field">
-      <label style="display:flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text);cursor:pointer">
-        <input type="checkbox" id="rpriv" checked style="width:auto;accent-color:#fff">
+      <label class="check">
+        <input type="checkbox" id="rpriv" checked>
+        <span class="box"></span>
         Private
       </label>
     </div>
@@ -2264,6 +2455,192 @@ function markdown(src){
             .replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[i]);
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   SYNTAX HIGHLIGHTING
+
+   One pass, one regex per language. Comments and strings are matched first and
+   consumed whole, so a keyword inside a string or a quote inside a comment can
+   never confuse what follows — which is the failure mode of every naive
+   highlighter.
+
+   This is not a parser. It will not understand a regex literal containing a
+   quote, and it does not care.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+const KW = {
+  js: 'const let var function return if else for while do break continue class extends new this super import export default from as async await try catch finally throw typeof instanceof delete in of null undefined true false switch case yield static get set',
+  java: 'public private protected class interface enum extends implements new return if else for while do break continue import package static final void int long float double boolean char String try catch finally throw throws this super null true false switch case abstract synchronized volatile transient native instanceof',
+  py: 'def class return if elif else for while break continue import from as pass raise try except finally with lambda yield global nonlocal None True False and or not in is assert del async await',
+  css: 'important media import keyframes supports font-face root',
+  sh: 'if then else elif fi for while do done case esac function return export local echo cd set unset source exit',
+  yaml: 'true false null yes no on off',
+  sql: 'select from where insert update delete create table drop alter join left right inner outer on group by order having limit as and or not null'
+};
+
+const LANG = {
+  js:'js', jsx:'js', ts:'js', tsx:'js', json:'js', mjs:'js', cjs:'js', gradle:'java',
+  java:'java', kt:'java', kts:'java', c:'java', h:'java', cpp:'java', cs:'java', go:'java', rs:'java', swift:'java',
+  py:'py', rb:'py',
+  css:'css', scss:'css',
+  html:'xml', htm:'xml', xml:'xml', svg:'xml', vue:'xml',
+  sh:'sh', bash:'sh', zsh:'sh',
+  yml:'yaml', yaml:'yaml', toml:'yaml', ini:'yaml', properties:'yaml', gitignore:'yaml',
+  sql:'sql'
+};
+
+const RULES = {};   // built once per language, on first use
+
+function rulesFor(lang){
+  if (RULES[lang]) return RULES[lang];
+
+  if (lang === 'xml') {
+    // Markup is a different shape entirely: tags and attributes, not keywords.
+    RULES[lang] = /(<!--[\s\S]*?-->)|("[^"]*"|'[^']*')|(<\/?[A-Za-z][\w:-]*)|(>|\/>)|([A-Za-z-]+)(?==)/g;
+    return RULES[lang];
+  }
+
+  const kw = (KW[lang] || '').trim().split(/\s+/).join('|');
+  const line = lang === 'py' || lang === 'sh' || lang === 'yaml' ? '#' : '\\/\\/';
+
+  RULES[lang] = new RegExp(
+    '(\\/\\*[\\s\\S]*?\\*\\/)'                 // 1 block comment
+  + '|(' + line + '[^\\n]*)'                   // 2 line comment
+  + '|("(?:\\\\.|[^"\\\\])*"'                  // 3 strings
+  +  "|'(?:\\\\.|[^'\\\\])*'"
+  +  '|`(?:\\\\.|[^`\\\\])*`)'
+  + '|\\b(\\d[\\w.]*)\\b'                      // 4 numbers
+  + (kw ? '|\\b(' + kw + ')\\b' : '|()')       // 5 keywords
+  + '|\\b([A-Za-z_$][\\w$]*)(?=\\s*\\()'       // 6 call sites
+  + '|([{}()\\[\\];,.:<>=+\\-*/%!&|?~^]+)',    // 7 punctuation
+    'g');
+  return RULES[lang];
+}
+
+function highlight(code, path){
+  const ext  = (path.split('.').pop() || '').toLowerCase();
+  const lang = LANG[ext];
+  if (!lang) return null;                       // unknown: leave it plain
+  if (code.length > 200000) return null;        // too big to re-tokenise per keystroke
+
+  const re = rulesFor(lang);
+  re.lastIndex = 0;
+
+  let out = '', last = 0, m;
+  while ((m = re.exec(code)) !== null) {
+    out += esc(code.slice(last, m.index));
+
+    if (lang === 'xml') {
+      const cls = m[1] ? 't-com' : m[2] ? 't-str' : m[3] ? 't-tag'
+                : m[4] ? 't-pun' : 't-att';
+      out += `<span class="${cls}">${esc(m[0])}</span>`;
+    } else {
+      const cls = m[1] || m[2] ? 't-com' : m[3] ? 't-str' : m[4] ? 't-num'
+                : m[5] ? 't-key' : m[6] ? 't-fn' : 't-pun';
+      out += `<span class="${cls}">${esc(m[0])}</span>`;
+    }
+
+    last = m.index + m[0].length;
+    if (m[0].length === 0) re.lastIndex++;      // never let an empty match spin
+  }
+  out += esc(code.slice(last));
+  return out;
+}
+
+/* Repaint the layer under the caret. Debounced: on a long file, tokenising on
+   every keystroke makes typing feel like wading. */
+let hlTimer;
+function paintHL(now){
+  clearTimeout(hlTimer);
+  const run = () => {
+    if (!S.file) return;
+    const html = highlight(S.buffer, S.file.path);
+    const ed = $('editor');
+
+    if (html === null) {                        // no rules for this file type
+      ed.classList.add('plain');
+      $('hl').classList.add('off');
+      return;
+    }
+    ed.classList.remove('plain');
+    $('hl').classList.remove('off');
+    // The trailing newline matters: without it the last line of the <pre> and the
+    // last line of the textarea disagree about height, and everything shifts.
+    $('hl').firstChild.innerHTML = html + '\n';
+    syncScroll();
+  };
+  now ? run() : (hlTimer = setTimeout(run, 110));
+}
+
+/* The two layers scroll as one. */
+function syncScroll(){
+  const ed = $('editor'), hl = $('hl');
+  hl.scrollTop  = ed.scrollTop;
+  hl.scrollLeft = ed.scrollLeft;
+}
+$('editor').addEventListener('scroll', syncScroll);
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SETTINGS
+   ═══════════════════════════════════════════════════════════════════════ */
+const DESKTOP_KEY = 'gitfile:desktop';
+
+function applyDesktop(on){
+  document.body.classList.toggle('desktop', on);
+
+  // This is what "Desktop site" actually does: stop telling the browser the
+  // viewport is the width of the phone, and give it a desktop width to lay out
+  // against. The WebView then scales the result down to fit the screen.
+  document.querySelector('meta[name=viewport]').setAttribute('content',
+    on ? 'width=1100'
+       : 'width=device-width, initial-scale=1, viewport-fit=cover');
+
+  // A 1100px layout on a 6-inch screen is unreadable without pinch-zoom.
+  if (window.Native && window.Native.setZoom) window.Native.setZoom(on);
+}
+
+$('gear').onclick = async () => {
+  const desktop = (await store.get(DESKTOP_KEY)) === '1';
+
+  sheet('Settings', `
+    <div class="sheetlist">
+      <button id="s-desktop">Desktop view<small>${
+        desktop ? 'On — the full-width layout, pinch to zoom'
+                : 'Off — laid out for a phone'
+      }</small></button>
+      <button id="s-wrap">Word wrap<small>${
+        S.wrap ? 'On — long lines fold' : 'Off — long lines scroll sideways'
+      }</small></button>
+      <button id="s-out">Sign out<small>Forgets the token on this device</small></button>
+    </div>
+    <div class="overwrite" style="margin:18px 0 0">
+      Signed in as <b>${S.user ? S.user.login : '—'}</b><br>
+      ${S.quota !== null ? S.quota + ' API requests left this hour' : ''}
+    </div>
+    <div style="height:16px"></div>
+    <button class="btn wide" onclick="closeSheet()">Close</button>
+  `, () => {
+    $('s-desktop').onclick = async () => {
+      const on = !desktop;
+      await store.set(DESKTOP_KEY, on ? '1' : '0');
+      applyDesktop(on);
+      closeSheet();
+      toast(on ? 'Desktop view on. Pinch to zoom.' : 'Phone view.');
+    };
+    $('s-wrap').onclick = () => { closeSheet(); toggleWrap(); };
+    $('s-out').onclick  = () => { closeSheet(); signOut(); };
+  });
+};
+
+function toggleWrap(){
+  S.wrap = !S.wrap;
+  const on = S.wrap;
+  [$('editor'), $('hl')].forEach(el => {
+    el.style.whiteSpace = on ? 'pre-wrap' : 'pre';
+    el.style.overflowX  = on ? 'hidden'   : 'auto';
+  });
+  toast(on ? 'Word wrap on.' : 'Word wrap off.');
+}
+
 function paintBackend(){
   const el = $('backend');
   if (!el) return;
@@ -2280,6 +2657,7 @@ function paintBackend(){
 
 (async function boot(){
   paintBackend();
+  applyDesktop((await store.get(DESKTOP_KEY)) === '1');
   paintRef();
   const saved = await store.get(TOKEN_KEY);
   if (!saved) { setBar(null); return; }
