@@ -1657,7 +1657,17 @@ async function openRepos(){
         private: r.private
       });
 
+      // A delete button on the row. It never deletes on tap — it opens the same
+      // type-the-name confirmation the Settings danger zone uses, because a repo
+      // delete has no undo.
+      const del = document.createElement('button');
+      del.className = 'rowmenu';
+      del.textContent = '🗑';
+      del.setAttribute('aria-label', 'Delete ' + r.name);
+      del.onclick = e => { e.stopPropagation(); deleteRepoConfirm(r.owner.login, r.name); };
+
       row.appendChild(b);
+      row.appendChild(del);
       list.appendChild(row);
     });
   } catch (e) {
@@ -1665,6 +1675,38 @@ async function openRepos(){
   }
 }
 
+
+/* Delete a repository, with GitHub's own safeguard: you must type the name.
+   There is no undo, so the friction is deliberate. */
+function deleteRepoConfirm(owner, name){
+  sheet('Delete repository', `
+    <div class="overwrite" style="border-color:var(--red)">
+      This permanently deletes <b>${esc(owner)}/${esc(name)}</b> — its code,
+      issues, pull requests, releases and history. It cannot be undone.
+    </div>
+    <div class="field">
+      <label for="dr-confirm">Type <b>${esc(name)}</b> to confirm</label>
+      <input type="text" id="dr-confirm" spellcheck="false" autocapitalize="off">
+    </div>
+    <button class="btn danger wide" id="dr-del" disabled>Delete this repository</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => {
+    $('dr-confirm').addEventListener('input', e => { $('dr-del').disabled = e.target.value !== name; });
+    $('dr-del').onclick = async () => {
+      try {
+        await api.deleteRepo(owner, name);
+        closeSheet();
+        toast('Deleted ' + name);
+        openRepos();
+      } catch (e) {
+        toast(e.status === 403
+          ? 'The token cannot delete repositories. Administration must be read and write.'
+          : e.message, 6000);
+      }
+    };
+  });
+}
 
 /* ═══════════════════════════════════════════════════════════════════════
    PROFILE
