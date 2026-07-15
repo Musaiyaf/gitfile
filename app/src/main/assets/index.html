@@ -501,86 +501,49 @@ pre.log{
 .reporow .pick{ color:var(--accent); font-size:13px; font-weight:500; flex:none; }
 .reporow.check .box{ flex:none; }
 
-/* ══ AI chat ═════════════════════════════════════════════════ */
-#v-ai{ display:none; }
-#v-ai.on{ display:flex; flex-direction:column; }
-
-#ai-thread{
-  flex:1; overflow-y:auto;
-  padding:8px 0 16px;
-  display:flex; flex-direction:column; gap:14px;
-}
-.msg{ max-width:100%; }
-.msg .who{
-  font-size:11px; font-weight:600; color:var(--fg-muted);
-  text-transform:uppercase; letter-spacing:.04em; margin-bottom:6px;
-}
-.msg.user .bubble{
-  background:var(--inset); border:1px solid var(--border); border-radius:var(--r);
-  padding:12px 14px;
-}
-.msg.ai .bubble.md{ font-size:14px; }
-.msg .bubble.md p:last-child{ margin-bottom:0; }
-
-/* A message the AI proposed as a file edit, with an Apply button. */
-.aiedit{
-  border:1px solid var(--accent); border-radius:var(--r);
-  margin-top:10px; overflow:hidden;
-}
-.aiedit .eh{
-  background:rgba(68,147,248,.1); border-bottom:1px solid var(--border);
-  padding:8px 12px; font-size:12px; color:var(--accent); font-weight:600;
-  display:flex; align-items:center; gap:8px;
-}
-.aiedit pre{
-  margin:0; padding:12px; max-height:40vh; overflow:auto;
-  font-family:var(--mono); font-size:12px; line-height:1.6; color:var(--fg);
-  white-space:pre;
-}
-.aiedit .ea{ padding:10px 12px; border-top:1px solid var(--border); display:flex; gap:8px; }
-
-.aitool{ color:var(--fg-subtle); font-size:12px; font-family:var(--mono); padding:2px 0; }
-.ai-typing{ color:var(--fg-muted); font-size:13px; padding:4px 0; }
-.ai-typing::after{ content:'●'; animation:pulse 1.2s ease-in-out infinite; margin-left:2px; }
-
-/* Composer, pinned to the bottom */
-#ai-composer{
-  position:sticky; bottom:0;
-  background:var(--canvas);
-  border-top:1px solid var(--border);
-  padding:10px 0 calc(10px + env(safe-area-inset-bottom));
-  margin:0 -16px; padding-left:16px; padding-right:16px;
-}
-#ai-ctx{ margin-bottom:8px; }
-.ctxchip{
-  display:inline-flex; align-items:center; gap:8px;
+/* ══ Commit message suggestions ══════════════════════════════ */
+.msgsuggest{ display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+.msgchip{
   background:var(--inset); border:1px solid var(--border-lit); border-radius:2em;
-  padding:4px 6px 4px 12px; font-size:12px; color:var(--fg-muted);
+  padding:4px 12px; font-size:12px; color:var(--fg-muted); cursor:pointer;
 }
-.ctxchip b{ color:var(--fg); font-weight:500; }
-.ctxchip button{ background:none; border:0; color:var(--fg-muted); font-size:14px; cursor:pointer; padding:0 4px; }
+.msgchip:hover{ color:var(--fg); border-color:var(--fg-subtle); }
 
-.ai-inrow{ display:flex; gap:8px; align-items:flex-end; }
-#ai-input{
-  flex:1; resize:none; max-height:40vh;
-  padding:10px 12px; border-radius:18px;
-  background:var(--inset); border:1px solid var(--border-lit);
-  font:inherit; font-size:14px; line-height:1.4;
+/* ══ Commit diff ═════════════════════════════════════════════ */
+.commitmeta{
+  border:1px solid var(--border); border-radius:var(--r);
+  padding:14px 16px; margin-bottom:16px;
 }
-#ai-input:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
-#ai-send{
-  flex:none; width:38px; height:38px; border-radius:50%;
-  background:var(--accent); color:#fff; border:0; font-size:18px; cursor:pointer;
-}
-#ai-send:disabled{ opacity:.4; }
+.commitmeta .msg{ font-size:16px; font-weight:600; color:var(--fg); margin-bottom:6px; }
+.commitmeta .by{ font-size:12px; color:var(--fg-muted); }
+.commitmeta .by .mono{ font-family:var(--mono); }
+.commitmeta .diffstat{ margin-top:8px; font-size:12px; color:var(--fg-muted); }
 
-/* Model row in the header area of the AI screen */
-.ai-modelbar{
-  display:flex; align-items:center; gap:8px; margin-bottom:12px;
-  padding-bottom:12px; border-bottom:1px solid var(--border);
+.filediff{ border:1px solid var(--border); border-radius:var(--r); margin-bottom:16px; overflow:hidden; }
+.fdhead{
+  display:flex; align-items:center; gap:8px;
+  background:var(--inset); border-bottom:1px solid var(--border);
+  padding:8px 12px; font-size:12px;
 }
-.ai-modelbar .m{ flex:1; min-width:0; font-size:13px; color:var(--fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.ai-modelbar .m b{ color:var(--fg-muted); font-weight:400; }
+.fdname{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  font-family:var(--mono); color:var(--fg); }
+.fdstat{ flex:none; font-family:var(--mono); font-size:11px; }
+.fdstat .a{ color:var(--add-fg); } .fdstat .d{ color:var(--del-fg); }
+.fdnote{ padding:10px 12px; font-size:12px; color:var(--fg-muted); }
+
+/* the diff rows reuse the editor diff palette */
+.filediff .diff{ border:0; border-radius:0; max-height:50vh; margin:0; }
+
+/* ══ PR preview ══════════════════════════════════════════════ */
+.prevfiles{ border:1px solid var(--border); border-radius:var(--r); margin-top:8px; overflow:hidden; }
+.prevfile{
+  display:flex; align-items:center; gap:8px;
+  padding:8px 12px; border-top:1px solid var(--border); font-size:12px;
+}
+.prevfile:first-child{ border-top:0; }
+.prevfile .n{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:var(--mono); }
+.prevfile .s{ flex:none; font-family:var(--mono); font-size:11px; }
+.prevfile .a{ color:var(--add-fg); } .prevfile .d{ color:var(--del-fg); }
 
 /* ══ About ═══════════════════════════════════════════════════ */
 .about{ text-align:center; padding:8px 0 20px; }
@@ -962,6 +925,7 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
     </section>
 
     <section class="view" id="v-log"></section>
+    <section class="view" id="v-commit"></section>
 
     <section class="view" id="v-actions"></section>
 
@@ -975,17 +939,7 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
     <section class="view" id="v-issues"></section>
     <section class="view" id="v-issue"></section>
     <section class="view" id="v-settings"></section>
-    <section class="view" id="v-ai">
-      <div id="ai-thread"></div>
-      <div id="ai-composer">
-        <div id="ai-ctx"></div>
-        <div class="ai-inrow">
-          <textarea id="ai-input" rows="1" placeholder="Ask anything…"
-                    spellcheck="false"></textarea>
-          <button id="ai-send" aria-label="Send">↑</button>
-        </div>
-      </div>
-    </section>
+
 
   </main>
 
@@ -1096,11 +1050,7 @@ const S = {
   fullRepo: null,  // the complete repo object, for settings
   attachTo:null,   // the release a picked file is destined for
   poll:    null,   // its polling timer
-  wrap:    false,  // word wrap in the editor
-  aiKey:   null,   // OpenRouter API key
-  aiModel: 'openrouter/free',  // the safe default: auto-routes to a live free model
-  aiChat:  [],     // the running conversation
-  aiCtx:   null    // a file attached as context, if any
+  wrap:    false   // word wrap in the editor
 };
 
 /* The editor is dirty when the buffer differs from the fetched blob. */
@@ -1241,6 +1191,22 @@ const api = {
   /* The plumbing. The contents API can only touch one file per commit; these
      four let us build a commit containing any number of changes. */
   commit:     (o, r, sha)  => gh(`/repos/${o}/${r}/git/commits/${sha}`),
+
+  /* The REST commit (not the git-data one above) carries the file list and a
+     unified-diff patch per file — everything the diff screen needs. */
+  commitFull: (o, r, sha)  => gh(`/repos/${o}/${r}/commits/${sha}`),
+
+  /* Compare two refs: base…head, with the same per-file patches. Used before
+     opening a PR, and to show what a branch contains. */
+  compare:    (o, r, base, head) =>
+                gh(`/repos/${o}/${r}/compare/${enc(base)}...${enc(head)}`),
+
+  /* Revert = commit the file's previous content back on top. We read the parent
+     of a commit to get "what it was before". */
+  commitParent: async (o, r, sha) => {
+    const c = await gh(`/repos/${o}/${r}/commits/${sha}`);
+    return c.parents && c.parents[0] ? c.parents[0].sha : null;
+  },
   makeBlob:   (o, r, body) => gh(`/repos/${o}/${r}/git/blobs`,   { method:'POST', body }),
   makeTree:   (o, r, body) => gh(`/repos/${o}/${r}/git/trees`,   { method:'POST', body }),
   makeCommit: (o, r, body) => gh(`/repos/${o}/${r}/git/commits`, { method:'POST', body }),
@@ -1422,10 +1388,6 @@ window.appBack = () => {
       loadTree(S.path);
       return true;
 
-    case 'ai':
-      loadTree(S.path);   // reflect anything the agent changed
-      return true;
-
     case 'search':
     case 'log':
     case 'actions':
@@ -1479,8 +1441,7 @@ const TABS = [
   { id:'actions', label:'Actions',       go:openActions },
   { id:'releases',label:'Releases',      go:openReleases },
   { id:'search',  label:'Search',        go:openSearch },
-  { id:'log',     label:'History',       go:() => openLog(null) },
-  { id:'ai',      label:'AI',            go:openAI }
+  { id:'log',     label:'History',       go:() => openLog(null) }
 ];
 
 function paintTabs(){
@@ -1493,7 +1454,6 @@ function paintTabs(){
   if (here === 'release')  here = 'releases';   // and a release to Releases
   if (here === 'issue')    here = 'issues';     // and an issue to Issues
   if (here === 'settings') here = 'code';       // settings has no tab of its own
-  if (here === 'ai')       here = 'ai';
 
   t.innerHTML = '';
   TABS.forEach(tab => {
@@ -1745,13 +1705,24 @@ async function loadTree(path){
   paintCrumbs();
 
   setBar([
-    { label:'Repos', onClick:openRepos },
-    { label:'Repo',  onClick:repoSheet },
-    { label:'+ New', onClick:newSheet, solid:true, grow:true }
+    { label:'Repos',  onClick:openRepos },
+    { label:'Recent', onClick:recentSheet },
+    { label:'Repo',   onClick:repoSheet },
+    { label:'+ New',  onClick:newSheet, solid:true, grow:true }
   ]);
 
   const list = $('treelist');
-  list.innerHTML = '<div class="empty">Loading…</div>';
+
+  // Paint from cache immediately, so navigation feels instant. Then fetch and
+  // repaint — the cache is a head start, never the final word.
+  const cacheKey = 'gitfile:tree:' + S.repo.owner + '/' + S.repo.name + ':' + S.branch + ':' + path;
+  let painted = false;
+  try {
+    const cached = await store.get(cacheKey);
+    if (cached) { renderTree(JSON.parse(cached)); painted = true; }
+  } catch { /* corrupt cache is not worth a crash */ }
+
+  if (!painted) list.innerHTML = '<div class="empty">Loading…</div>';
 
   try {
     const items = await api.contents(S.repo.owner, S.repo.name, path, S.branch);
@@ -1759,13 +1730,29 @@ async function loadTree(path){
     // A path that is a file, not a directory — shouldn't happen from the UI.
     if (!Array.isArray(items)) { return openFile(path); }
 
-    if (!items.length) { list.innerHTML = '<div class="empty">Empty directory.</div>'; return; }
+    // Cache the fresh copy for next time (fire and forget).
+    store.set(cacheKey, JSON.stringify(items)).catch(() => {});
 
-    // Directories first, then files. Both alphabetical.
-    items.sort((a, b) =>
-      (a.type === b.type) ? a.name.localeCompare(b.name) : (a.type === 'dir' ? -1 : 1)
-    );
+    renderTree(items);
+  } catch (e) {
+    // Network failed. If we already showed the cache, keep it and say so
+    // quietly; only error out if there was nothing to show.
+    if (!painted) list.innerHTML = `<div class="empty">${e.message}</div>`;
+    else toast('Showing a saved copy — could not reach GitHub.', 4000);
+  }
+}
 
+function renderTree(items){
+  const list = $('treelist');
+
+  if (!items.length) { list.innerHTML = '<div class="empty">Empty directory.</div>'; return; }
+
+  // Directories first, then files. Both alphabetical.
+  items = items.slice().sort((a, b) =>
+    (a.type === b.type) ? a.name.localeCompare(b.name) : (a.type === 'dir' ? -1 : 1)
+  );
+
+  {
     list.innerHTML = '';
     items.forEach(it => {
       const row = document.createElement('div');
@@ -1791,9 +1778,6 @@ async function loadTree(path){
     });
     paintCommitBar();
     paintReadme(items);
-
-  } catch (e) {
-    list.innerHTML = `<div class="empty">${e.message}</div>`;
   }
 }
 
@@ -1885,6 +1869,52 @@ function filePane(which){
   $('editstat').style.display = which === 'image'  ? 'none'  : 'flex';
 }
 
+/* ── Recent files ─────────────────────────────────────────────────────────
+   A short per-repo list of what you have opened, most recent first, so you can
+   jump back to the handful of files you actually work in without walking the
+   tree each time. Kept on-device.
+   ──────────────────────────────────────────────────────────────────────── */
+function recentKey(){ return 'gitfile:recent:' + S.repo.owner + '/' + S.repo.name; }
+
+async function recordRecent(path){
+  try {
+    let list = JSON.parse((await store.get(recentKey())) || '[]');
+    list = [path, ...list.filter(p => p !== path)].slice(0, 12);
+    await store.set(recentKey(), JSON.stringify(list));
+  } catch { /* a missing recent list is no reason to fail an open */ }
+}
+
+async function recentFiles(){
+  try { return JSON.parse((await store.get(recentKey())) || '[]'); }
+  catch { return []; }
+}
+
+async function recentSheet(){
+  const list = await recentFiles();
+  if (!list.length) { toast('No recent files yet — open a few.'); return; }
+
+  sheet('Recent files', `
+    <div class="filebox">
+      ${list.map((path, i) => `
+        <button class="row rec" data-i="${i}">
+          <span class="glyph ${fileClass(path.split('/').pop())}">${fileGlyph({ type:'file', name:path })}</span>
+          <span class="body" style="flex:1;min-width:0">
+            <span class="name">${esc(path.split('/').pop())}</span>
+            <span class="sub" style="display:block;color:var(--fg-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(path)}</span>
+          </span>
+        </button>`).join('')}
+    </div>
+    <button class="btn wide" id="rec-clear">Clear list</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Close</button>
+  `, () => {
+    document.querySelectorAll('.rec').forEach(el => {
+      el.onclick = () => { closeSheet(); openFile(list[Number(el.dataset.i)]); };
+    });
+    $('rec-clear').onclick = async () => { await store.set(recentKey(), '[]'); closeSheet(); toast('Cleared'); };
+  });
+}
+
 async function openFile(path){
   show('file');
   const ed = $('editor');
@@ -1894,6 +1924,8 @@ async function openFile(path){
 
   try {
     const f = await api.contents(S.repo.owner, S.repo.name, path, S.branch);
+
+    recordRecent(path);   // remember it for quick-open
 
     // Over 1 MB, the contents API returns the metadata but blanks the content.
     // The sha it hands back is the way through: fetch the blob directly.
@@ -1999,7 +2031,6 @@ function fileSheet(){
     <div class="sheetlist">
       ${md ? `<button id="f-prev">${showingPreview ? 'Show source' : 'Preview markdown'}<small>Render it the way GitHub would</small></button>` : ''}
       <button id="f-log">History<small>Every commit that touched this file</small></button>
-      <button id="f-ai">Ask AI about this file<small>Attach it to a chat, and let the AI edit it</small></button>
       <button id="f-del">Delete<small>Removes the file in a single commit</small></button>
     </div>
     <button class="btn wide" onclick="closeSheet()">Close</button>
@@ -2009,7 +2040,6 @@ function fileSheet(){
       if (showingPreview) { filePane('edit'); }
       else { $('preview').innerHTML = markdown(S.buffer); filePane('preview'); }
     };
-    $('f-ai').onclick  = () => { closeSheet(); aiAttachFile(); openAI(); };
     $('f-log').onclick = () => { closeSheet(); openLog(S.file.path); };
     $('f-del').onclick = () => { closeSheet(); doDelete({ path:S.file.path, name:S.file.path.split('/').pop() }); };
   });
@@ -2081,6 +2111,7 @@ function commitSheet(){
     <div class="field">
       <label for="cmsg">Message</label>
       <input type="text" id="cmsg" placeholder="${moved ? 'Move ' + S.file.path.split('/').pop() : 'Update ' + S.file.path.split('/').pop()}">
+      <div class="msgsuggest" id="msgsuggest"></div>
     </div>
     <button class="btn solid wide" id="cgo">Commit to ${S.branch}</button>
     <div style="height:10px"></div>
@@ -2088,6 +2119,25 @@ function commitSheet(){
   `, () => {
     $('cgo').onclick = doCommit;
     $('cmsg').addEventListener('keydown', e => { if (e.key === 'Enter') doCommit(); });
+
+    // Tappable message suggestions, built from what actually changed — a
+    // conventional-commits starter without making you type it.
+    const name = (newPath || S.file.path).split('/').pop();
+    const verb = moved ? 'Move'
+      : (d && d.added && !d.removed) ? 'Add to'
+      : (d && d.removed && !d.added) ? 'Trim'
+      : 'Update';
+    const suggestions = [
+      `${verb} ${name}`,
+      `docs: update ${name}`,
+      `fix: ${name}`,
+      `refactor ${name}`
+    ];
+    $('msgsuggest').innerHTML = suggestions
+      .map(m => `<button type="button" class="msgchip">${esc(m)}</button>`).join('');
+    $('msgsuggest').querySelectorAll('.msgchip').forEach(b => {
+      b.onclick = () => { $('cmsg').value = b.textContent; $('cmsg').focus(); };
+    });
   });
 }
 
@@ -2293,15 +2343,130 @@ async function openLog(path){
         <span class="glyph">${c.sha.slice(0, 2)}</span>
         <span class="name">${esc(c.commit.message.split('\n')[0])}</span>
         <span class="meta">${ago(c.commit.author.date)}</span>`;
-      // GitHub renders a commit diff far better than we can on a phone.
-      b.onclick = () => window.Native
-        ? window.Native.openUrl(c.html_url)
-        : window.open(c.html_url, '_blank');
+      b.onclick = () => openCommit(c.sha, () => openLog(path));
       v.appendChild(b);
     });
   } catch (e) {
     v.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
   }
+}
+
+/* ── One commit, with its diff ────────────────────────────────────────────
+   GitHub returns a unified-diff patch per file on the commit endpoint. This is
+   the last screen that used to kick you out to the browser; now the diff renders
+   in place, coloured the same as the editor's commit diff.
+   ──────────────────────────────────────────────────────────────────────── */
+async function openCommit(sha, backTo){
+  show('commit');
+  const v = $('v-commit');
+  v.innerHTML = '<div class="empty">Loading…</div>';
+  setBar([{ label:'Back', onClick: backTo || (() => openLog(null)), solid:true }]);
+
+  try {
+    const c = await api.commitFull(S.repo.owner, S.repo.name, sha);
+    S.commit = c;
+
+    const files = c.files || [];
+    const add = files.reduce((n, f) => n + (f.additions || 0), 0);
+    const del = files.reduce((n, f) => n + (f.deletions || 0), 0);
+
+    v.innerHTML = `
+      <div class="commitmeta">
+        <div class="msg">${esc(c.commit.message.split('\n')[0])}</div>
+        <div class="by">${esc(c.author ? c.author.login : c.commit.author.name)} · ${ago(c.commit.author.date)} · <span class="mono">${c.sha.slice(0, 7)}</span></div>
+        <div class="diffstat"><span class="a">+${add}</span> <span class="d">−${del}</span> across ${files.length} file${files.length === 1 ? '' : 's'}</div>
+      </div>
+      ${files.map((f, i) => renderPatch(f, i)).join('')}`;
+
+    setBar([
+      { label:'Back',   onClick: backTo || (() => openLog(null)) },
+      { label:'Revert', onClick: () => revertCommit(c), grow:true },
+      { label:'GitHub', onClick: () => (window.Native ? window.Native.openUrl(c.html_url) : window.open(c.html_url, '_blank')), solid:true }
+    ]);
+  } catch (e) {
+    v.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+
+/* Turn a GitHub file patch into coloured diff lines. The patch is standard
+   unified-diff text: @@ hunks, +added, -removed, space=context. */
+function renderPatch(f, i){
+  const head = `
+    <div class="filediff">
+      <div class="fdhead">
+        <span class="fdname">${esc(f.filename)}</span>
+        <span class="fdstat"><span class="a">+${f.additions}</span> <span class="d">−${f.deletions}</span></span>
+      </div>`;
+
+  if (f.status === 'renamed' && !f.patch)
+    return head + `<div class="fdnote">Renamed from ${esc(f.previous_filename)}</div></div>`;
+  if (!f.patch)
+    return head + `<div class="fdnote">${esc(f.status)} · binary or too large to show</div></div>`;
+
+  const rows = f.patch.split('\n').map(line => {
+    const c = line[0];
+    const cls = c === '+' ? 'add' : c === '-' ? 'del' : c === '@' ? 'gap' : 'ctx';
+    return `<div class="${cls}">${esc(line) || '&nbsp;'}</div>`;
+  }).join('');
+
+  return head + `<div class="diff">${rows}</div></div>`;
+}
+
+/* Revert: put every file in the commit back to how it was in the parent, as one
+   new commit. GitHub has no one-click revert API for a plain commit, so we
+   rebuild the previous state and commit it — which is exactly what a revert is. */
+async function revertCommit(c){
+  const files = (c.files || []).filter(f => f.status !== 'removed' || true);
+  if (!files.length) { toast('Nothing to revert.'); return; }
+
+  sheet('Revert commit', `
+    <div class="overwrite">
+      Undo <b>${esc(c.commit.message.split('\n')[0])}</b><br>
+      ${c.sha.slice(0, 7)} · ${files.length} file${files.length === 1 ? '' : 's'}
+    </div>
+    <p class="hint" style="margin-bottom:16px">
+      This makes a new commit restoring these files to how they were just before
+      this one. The history is kept — nothing is erased.
+    </p>
+    <button class="btn danger wide" id="rv-go">Revert as a new commit</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => {
+    $('rv-go').onclick = async () => {
+      const btn = $('rv-go');
+      busy(btn, true, 'Reverting…');
+      try {
+        const parent = await api.commitParent(S.repo.owner, S.repo.name, c.sha);
+        const changes = [];
+
+        for (const f of c.files || []) {
+          if (f.status === 'added') {
+            // It was created by this commit — reverting means deleting it.
+            changes.push({ path: f.filename, delete: true });
+          } else {
+            // Fetch the parent's version and restore it.
+            if (!parent) throw new Error('This is the first commit; nothing to revert to.');
+            try {
+              const prev = await api.contents(S.repo.owner, S.repo.name, f.filename, parent);
+              const b64 = prev.content ? prev.content.replace(/\n/g, '')
+                        : b64encode(b64decode((await api.blob(S.repo.owner, S.repo.name, prev.sha)).content));
+              changes.push({ path: f.filename, b64 });
+            } catch {
+              changes.push({ path: f.filename, delete: true });
+            }
+          }
+        }
+
+        await commitFiles(changes, 'Revert "' + c.commit.message.split('\n')[0] + '"');
+        closeSheet();
+        toast('Reverted in a new commit');
+        openLog(null);
+      } catch (e) {
+        toast(e.message, 6000);
+        busy(btn, false);
+      }
+    };
+  });
 }
 
 /* ── Code search ─────────────────────────────────────────────────────── */
@@ -3117,642 +3282,6 @@ function openLogs(job){
     `${API}/repos/${S.repo.owner}/${S.repo.name}/actions/jobs/${job.id}/logs`,
     S.token,
     'onJobLog');
-}
-
-/* ═══════════════════════════════════════════════════════════════════════
-   AI  ·  OpenRouter
-
-   One API key, OpenAI-compatible, with genuinely free models. The key is the
-   user's own — an app-embedded key would be readable in the APK and would spend
-   the author's credits — so it is entered and stored exactly like the GitHub
-   token. The free-model list is fetched live, because which models carry the
-   :free tag changes week to week; hardcoding them would rot.
-   ═══════════════════════════════════════════════════════════════════════ */
-const OR = 'https://openrouter.ai/api/v1';
-const AI_KEY_STORE   = 'gitfile:orkey';
-const AI_MODEL_STORE = 'gitfile:ormodel';
-
-let AI_MODELS = null;   // fetched once per session
-
-async function openAI(){
-  show('ai');
-
-  if (!S.aiKey) S.aiKey = await store.get(AI_KEY_STORE);
-  const savedModel = await store.get(AI_MODEL_STORE);
-  if (savedModel) S.aiModel = savedModel;
-
-  if (!S.aiKey) { aiKeyScreen(); return; }
-
-  renderChat();
-  setBar([
-    { label:'Model',  onClick:aiModelSheet },
-    S.view === 'ai' && S.file ? { label:'Attach file', onClick:aiAttachFile } : { label:'New chat', onClick:aiNewChat },
-    { label:'Clear',  onClick:aiNewChat }
-  ]);
-  updateComposerBar();
-}
-
-/* Key entry — the same shape as GitHub sign-in. */
-function aiKeyScreen(){
-  $('ai-thread').innerHTML = `
-    <div class="pad" style="padding-top:24px">
-      <h1 style="padding-left:0">Connect OpenRouter</h1>
-      <p class="hint" style="margin-bottom:16px">
-        gitfile uses <b>OpenRouter</b> for AI. Create a free key at
-        <a href="#" id="ai-signup">openrouter.ai/keys</a> — no card needed for the
-        free models. The key is stored on this device and sent only to openrouter.ai.
-      </p>
-      <div class="field">
-        <label for="ai-k">OpenRouter API key</label>
-        <input type="text" id="ai-k" class="masked" placeholder="sk-or-v1-…"
-               spellcheck="false" autocapitalize="off" autocomplete="off">
-        <div class="tokmeta"><span></span><button type="button" id="ai-kshow">show</button></div>
-      </div>
-      <button class="btn solid wide" id="ai-ksave">Connect</button>
-    </div>`;
-  $('ai-composer').style.display = 'none';
-  setBar([{ label:'Back', onClick:() => loadTree(S.path), solid:true }]);
-
-  $('ai-signup').onclick = e => { e.preventDefault();
-    (window.Native ? window.Native.openUrl : window.open)('https://openrouter.ai/keys', '_blank'); };
-  $('ai-kshow').onclick = () => {
-    const f = $('ai-k'); const shown = f.classList.toggle('plain');
-    $('ai-kshow').textContent = shown ? 'hide' : 'show';
-  };
-  $('ai-ksave').onclick = async () => {
-    const k = $('ai-k').value.replace(/\s/g, '');
-    if (!k.startsWith('sk-or-')) { toast('An OpenRouter key starts with sk-or-.'); return; }
-    S.aiKey = k;
-    await store.set(AI_KEY_STORE, k);
-    $('ai-composer').style.display = '';
-    openAI();
-  };
-}
-
-/* Every OpenRouter call. */
-async function aiFetch(path, body){
-  const res = await fetch(OR + path, {
-    method: body ? 'POST' : 'GET',
-    headers: {
-      'Authorization': 'Bearer ' + S.aiKey,
-      'Content-Type': 'application/json',
-      // OpenRouter asks callers to identify themselves; harmless if omitted.
-      'HTTP-Referer': 'https://github.com/Musaiyaf/gitfile',
-      'X-Title': 'gitfile'
-    },
-    body: body ? JSON.stringify(body) : undefined
-  });
-  if (!res.ok) {
-    const d = await res.json().catch(() => null);
-    const msg = d?.error?.message || ('OpenRouter error ' + res.status);
-    if (res.status === 401) throw new Error('OpenRouter rejected the key.');
-    if (res.status === 429) throw new Error('Rate limit hit — free models allow about 20 requests a minute, 50 a day. Wait a moment, or add credits.');
-    throw new Error(msg);
-  }
-  return res.json();
-}
-
-/* Fetch the live free-model list. */
-async function aiModelSheet(){
-  sheet('Choose a model', '<div class="empty">Loading…</div>');
-  try {
-    if (!AI_MODELS) {
-      const { data } = await aiFetch('/models');
-      // Free = both prompt and completion priced at zero. The list rotates, so
-      // this is computed, never hardcoded.
-      AI_MODELS = data
-        .filter(m => Number(m.pricing?.prompt) === 0 && Number(m.pricing?.completion) === 0)
-        .sort((a, b) => a.name.localeCompare(b.name));
-    }
-
-    const rows = [
-      { id:'openrouter/free', name:'Auto (Free Models Router)',
-        note:'Picks a working free model for you — never breaks when one rotates out' },
-      ...AI_MODELS.map(m => ({
-        id:m.id, name:m.name,
-        note:(m.context_length ? (Math.round(m.context_length/1000) + 'K context') : '') }))
-    ];
-
-    $('sheetbody').innerHTML = `
-      <input type="text" id="ai-mq" placeholder="Search models…" spellcheck="false">
-      <div id="ai-mlist" style="max-height:56vh; overflow:auto; margin-top:8px"></div>`;
-
-    const paint = () => {
-      const f = $('ai-mq').value.toLowerCase();
-      $('ai-mlist').innerHTML = rows
-        .filter(r => r.name.toLowerCase().includes(f) || r.id.toLowerCase().includes(f))
-        .slice(0, 100)
-        .map(r => `<button class="row" data-id="${esc(r.id)}">
-            <span class="body" style="flex:1">
-              <span class="name">${esc(r.name)}${r.id === S.aiModel ? ' ✓' : ''}</span>
-              <span class="sub" style="display:block;color:var(--fg-muted);font-size:12px">${esc(r.note || r.id)}</span>
-            </span></button>`).join('');
-      $('ai-mlist').querySelectorAll('.row').forEach(el => {
-        el.onclick = async () => {
-          S.aiModel = el.dataset.id;
-          await store.set(AI_MODEL_STORE, S.aiModel);
-          closeSheet(); updateComposerBar();
-          toast('Model: ' + S.aiModel);
-        };
-      });
-    };
-    $('ai-mq').addEventListener('input', paint);
-    paint();
-    setTimeout(() => $('ai-mq').focus(), 60);
-
-  } catch (e) {
-    $('sheetbody').innerHTML = `<div class="empty">${esc(e.message)}</div>`;
-  }
-}
-
-function updateComposerBar(){
-  // Show the current model as a thin line above the thread.
-  let bar = $('ai-modelbar');
-  if (!bar) {
-    bar = document.createElement('div');
-    bar.className = 'ai-modelbar'; bar.id = 'ai-modelbar';
-    $('ai-thread').prepend(bar);
-  }
-  const short = S.aiModel.replace(':free', '').split('/').pop();
-  bar.innerHTML = `<span class="m"><b>Model:</b> ${esc(short)}</span>`;
-}
-
-function aiNewChat(){
-  S.aiChat = [];
-  S.aiCtx = null;
-  renderChat();
-  updateComposerBar();
-  $('ai-ctx').innerHTML = '';
-  toast('New chat');
-}
-
-/* Attach the open file so the model can see and edit it. */
-function aiAttachFile(){
-  if (!S.file || S.file.binary) { toast('Open a text file first.'); return; }
-  S.aiCtx = { path: S.file.path, text: S.buffer };
-  renderCtxChip();
-  openAI();   // refresh the bar
-  show('ai');
-}
-
-function renderCtxChip(){
-  const c = $('ai-ctx');
-  if (!S.aiCtx) { c.innerHTML = ''; return; }
-  c.innerHTML = `<span class="ctxchip">📄 <b>${esc(S.aiCtx.path.split('/').pop())}</b>
-    attached <button id="ctx-x">✕</button></span>`;
-  $('ctx-x').onclick = () => { S.aiCtx = null; renderCtxChip(); };
-}
-
-function renderChat(){
-  const t = $('ai-thread');
-  const bar = $('ai-modelbar');
-  t.innerHTML = '';
-  if (bar) t.appendChild(bar);
-
-  if (!S.aiChat.length) {
-    t.insertAdjacentHTML('beforeend',
-      `<div class="empty" style="border:0">
-        Ask a question, or tell the agent to do something —<br>
-        "create a repo called notes with a README", "add error handling to this file",
-        "open an issue for the login bug". It will ask before it changes anything.
-      </div>`);
-  }
-
-  S.aiChat.forEach(m => {
-    const el = document.createElement('div');
-    el.className = 'msg ' + m.role;
-
-    if (m.role === 'tool') {
-      // A compact, dim line — the model's plumbing, not conversation.
-      el.innerHTML = `<div class="aitool">↳ ${esc(m.content.split('\n')[0]).slice(0, 120)}</div>`;
-      t.appendChild(el);
-      return;
-    }
-
-    if (m.role === 'user') {
-      el.innerHTML = `<div class="who">You</div><div class="bubble">${esc(m.content)}</div>`;
-    } else {
-      el.innerHTML = `<div class="who">AI</div><div class="bubble md">${markdown(m.content)}</div>`;
-      // If the reply is a single fenced code block and a file is attached, offer
-      // to apply it as an edit.
-      const code = loneCodeBlock(m.content);
-      if (code && S.aiCtx) {
-        const box = document.createElement('div');
-        box.className = 'aiedit';
-        box.innerHTML = `
-          <div class="eh">✎ Proposed edit · ${esc(S.aiCtx.path.split('/').pop())}</div>
-          <pre>${esc(code)}</pre>
-          <div class="ea">
-            <button class="btn solid small" data-apply>Apply to editor</button>
-          </div>`;
-        box.querySelector('[data-apply]').onclick = () => aiApplyEdit(code);
-        el.querySelector('.bubble').appendChild(box);
-      }
-    }
-    t.appendChild(el);
-  });
-  t.scrollTop = t.scrollHeight;
-}
-
-/* A reply that is exactly one ```code``` block, nothing else meaningful. */
-function loneCodeBlock(text){
-  const m = text.match(/^[\s\S]*?```[\w]*\n([\s\S]*?)```[\s\S]*$/);
-  if (!m) return null;
-  const blocks = text.match(/```/g) || [];
-  if (blocks.length !== 2) return null;   // more than one block: too ambiguous to auto-apply
-  return m[1].replace(/\n$/, '');
-}
-
-function aiApplyEdit(code){
-  if (S.view !== 'file' && !S.file) { toast('Open the file first.'); return; }
-  // Drop the buffer in and let the normal commit flow take over — the AI never
-  // writes to the repo, only to the editor. You review and commit.
-  S.buffer = code;
-  if ($('editor')) $('editor').value = code;
-  show('file');
-  paintStats?.(); paintHL?.(true); paintRef?.(); refreshCommitBtn?.();
-  toast('Applied to the editor. Review, then commit.');
-}
-
-/* ═══════════════════════════════════════════════════════════════════════
-   AGENT TOOLS
-
-   The AI can call these. Reads run on their own — browsing and reading cannot
-   hurt anything. Writes are gated: every one returns to the user as an
-   Approve / Skip card before it runs. The model never holds the trigger.
-
-   This matters more here than in most agent designs because these are free models —
-   the least capable tier — wielding a token that can delete repositories. A
-   confident hallucination with no gate is unrecoverable. So there is a gate.
-   ═══════════════════════════════════════════════════════════════════════ */
-const AI_TOOLS = {
-  // ── reads (auto) ──────────────────────────────────────────────────────
-  list_files: {
-    write: false,
-    desc: 'List files and folders at a path in the current repo.',
-    params: { path: 'Directory path, empty for root' },
-    run: async ({ path }) => {
-      const items = await api.contents(S.repo.owner, S.repo.name, path || '', S.branch);
-      return (Array.isArray(items) ? items : [items])
-        .map(i => `${i.type === 'dir' ? 'dir ' : 'file'} ${i.path}`).join('\n');
-    }
-  },
-  read_file: {
-    write: false,
-    desc: 'Read a text file from the current repo.',
-    params: { path: 'File path' },
-    run: async ({ path }) => {
-      const f = await api.contents(S.repo.owner, S.repo.name, path, S.branch);
-      if (!f.content) throw new Error('empty or too large');
-      return b64decode(f.content).slice(0, 12000);
-    }
-  },
-  list_repos: {
-    write: false,
-    desc: 'List the user\'s repositories.',
-    params: {},
-    run: async () => (await api.repos()).map(r => r.full_name + (r.private ? ' (private)' : '')).join('\n')
-  },
-
-  // ── writes (need approval) ────────────────────────────────────────────
-  write_file: {
-    write: true,
-    desc: 'Create or overwrite a file with content, in one commit.',
-    params: { path: 'File path', content: 'Full file content', message: 'Commit message' },
-    preview: a => `Write ${a.path} on ${S.branch}\n\n${a.content.slice(0, 600)}${a.content.length > 600 ? '\n…' : ''}`,
-    run: async a => {
-      await commitFiles([{ path: a.path, b64: b64encode(a.content) }],
-                        a.message || ('Add ' + a.path));
-      return 'written: ' + a.path;
-    }
-  },
-  delete_file: {
-    write: true,
-    desc: 'Delete a file in one commit.',
-    params: { path: 'File path', message: 'Commit message' },
-    preview: a => `Delete ${a.path} on ${S.branch}`,
-    run: async a => {
-      await commitFiles([{ path: a.path, delete: true }], a.message || ('Delete ' + a.path));
-      return 'deleted: ' + a.path;
-    }
-  },
-  create_folder: {
-    write: true,
-    desc: 'Create a folder (adds a .gitkeep inside).',
-    params: { path: 'Folder path' },
-    preview: a => `Create folder ${a.path}/ (via ${a.path}/.gitkeep)`,
-    run: async a => {
-      await commitFiles([{ path: a.path.replace(/\/$/, '') + '/.gitkeep', b64: b64encode('') }],
-                        'Add ' + a.path);
-      return 'folder created: ' + a.path;
-    }
-  },
-  create_repo: {
-    write: true,
-    desc: 'Create a new repository for the user.',
-    params: { name: 'Repo name', private: 'true or false', description: 'Optional', auto_init: 'true to add a README' },
-    preview: a => `Create ${a.private === false ? 'public' : 'private'} repo "${a.name}"${a.description ? '\n' + a.description : ''}`,
-    run: async a => {
-      const repo = await api.createRepo({
-        name: a.name,
-        private: a.private !== false && a.private !== 'false',
-        description: a.description || '',
-        auto_init: true
-      });
-      return 'repo created: ' + repo.full_name;
-    }
-  },
-  create_branch: {
-    write: true,
-    desc: 'Create a branch from the current one.',
-    params: { name: 'Branch name' },
-    preview: a => `Branch "${a.name}" from ${S.branch}`,
-    run: async a => {
-      const base = await api.ref(S.repo.owner, S.repo.name, S.branch);
-      await api.makeRef(S.repo.owner, S.repo.name, a.name, base.object.sha);
-      return 'branch created: ' + a.name;
-    }
-  },
-  create_issue: {
-    write: true,
-    desc: 'Open an issue.',
-    params: { title: 'Issue title', body: 'Markdown body' },
-    preview: a => `Open issue: "${a.title}"${a.body ? '\n\n' + a.body.slice(0, 400) : ''}`,
-    run: async a => {
-      const i = await api.makeIssue(S.repo.owner, S.repo.name, { title: a.title, body: a.body || '' });
-      return 'issue opened: #' + i.number;
-    }
-  },
-  open_pull_request: {
-    write: true,
-    desc: 'Open a pull request from the current branch into the default branch.',
-    params: { title: 'PR title', body: 'Markdown body' },
-    preview: a => `PR "${a.title}": ${S.branch} → ${S.repo.default_branch}`,
-    run: async a => {
-      const pr = await api.makePR(S.repo.owner, S.repo.name, {
-        title: a.title, body: a.body || '', head: S.branch, base: S.repo.default_branch });
-      return 'PR opened: #' + pr.number;
-    }
-  },
-  run_workflow: {
-    write: true,
-    desc: 'Start a GitHub Actions workflow by its file name (e.g. build.yml).',
-    params: { file: 'Workflow file name' },
-    preview: a => `Run workflow ${a.file} on ${S.branch}`,
-    run: async a => {
-      const { workflows } = await api.workflows(S.repo.owner, S.repo.name);
-      const w = workflows.find(x => x.path.endsWith(a.file) || x.name === a.file);
-      if (!w) throw new Error('no workflow named ' + a.file);
-      await api.dispatch(S.repo.owner, S.repo.name, w.id, S.branch);
-      return 'workflow started: ' + a.file;
-    }
-  }
-};
-
-/* The tool catalogue, as text the model reads in its system prompt. Function
-   calling is uneven across free models, so instead the model emits a small JSON
-   object and we parse it — the lowest common denominator that works everywhere. */
-function toolManual(){
-  return Object.entries(AI_TOOLS).map(([name, t]) => {
-    const params = Object.entries(t.params).map(([k, v]) => `"${k}": <${v}>`).join(', ');
-    return `- ${name}${t.write ? ' [needs approval]' : ''}: ${t.desc}\n    {"tool":"${name}","args":{${params}}}`;
-  }).join('\n');
-}
-
-/* A write is proposed, not done. Show the preview with Approve / Skip and wait. */
-function approveGate(name, args){
-  return new Promise(resolve => {
-    const tool = AI_TOOLS[name];
-    const preview = tool.preview ? tool.preview(args) : JSON.stringify(args, null, 1);
-
-    const t = $('ai-thread');
-    const el = document.createElement('div');
-    el.className = 'msg ai';
-    el.innerHTML = `
-      <div class="who">AI wants to</div>
-      <div class="aiedit">
-        <div class="eh">⚠ ${esc(name.replace(/_/g, ' '))}</div>
-        <pre>${esc(preview)}</pre>
-        <div class="ea">
-          <button class="btn solid small" data-ok>Approve</button>
-          <button class="btn small" data-no>Skip</button>
-        </div>
-      </div>`;
-    t.appendChild(el); t.scrollTop = t.scrollHeight;
-
-    el.querySelector('[data-ok]').onclick = () => { el.querySelector('.ea').innerHTML = '<span style="color:var(--green-fg);font-size:12px">Approved</span>'; resolve(true); };
-    el.querySelector('[data-no]').onclick = () => { el.querySelector('.ea').innerHTML = '<span style="color:var(--fg-muted);font-size:12px">Skipped</span>'; resolve(false); };
-  });
-}
-
-async function aiSend(){
-  const input = $('ai-input');
-  const text = input.value.trim();
-  if (!text) return;
-  if (!S.aiKey) { openAI(); return; }
-
-  input.value = ''; input.style.height = 'auto';
-  $('ai-send').disabled = true;
-
-  S.aiChat.push({ role:'user', content:text });
-  renderChat();
-
-  try {
-    await aiAgentLoop(text);
-  } catch (e) {
-    S.aiChat.push({ role:'ai', content: '⚠️ ' + e.message });
-    renderChat();
-  } finally {
-    $('ai-send').disabled = false;
-  }
-}
-
-/* ── The agent loop ───────────────────────────────────────────────────────
-   The model can act, not just answer. Each turn it may call a tool; we run it
-   (reads immediately, writes only after you approve) and feed the result back,
-   so it can chain steps — create a repo, then add a file to it, then open an
-   issue — until it has nothing left to do and gives a final answer.
-
-   A hard ceiling of 8 tool calls per request stops a confused model looping
-   forever and burning the day's free-tier budget in one go.
-   ──────────────────────────────────────────────────────────────────────── */
-async function aiAgentLoop(userText){
-  const repoLine = S.repo
-    ? `The current repository is ${S.repo.owner}/${S.repo.name}, branch ${S.branch}.`
-    : `No repository is open. Use list_repos, or create_repo, before repo-specific tools.`;
-
-  const fileLine = S.aiCtx
-    ? `The user has attached ${S.aiCtx.path}. Its current content is:\n\n${S.aiCtx.text}\n`
-    : '';
-
-  const system = `You are gitfile's built-in agent: a GitHub assistant that can act on the user's repositories through tools, running on their phone with their own permissions.
-
-${repoLine}
-${fileLine}
-To use a tool, reply with ONE line of JSON and nothing else:
-{"tool":"<name>","args":{...}}
-
-When you have finished and want to speak to the user, reply with plain text (no JSON).
-
-Available tools:
-${toolManual()}
-
-Rules:
-- Reads happen automatically. Writes are shown to the user for approval — if they skip one, adapt or stop.
-- Take one step at a time. After each tool result, decide the next step.
-- Be concise. Do not narrate every step; act, then summarise at the end.
-- Never invent file contents you have not read.`;
-
-  // Build the running message list from the visible conversation.
-  const messages = [{ role:'system', content:system }];
-  S.aiChat.forEach(m => {
-    if (m.role === 'user') messages.push({ role:'user', content:m.content });
-    else if (m.role === 'ai') messages.push({ role:'assistant', content:m.content });
-    else if (m.role === 'tool') messages.push({ role:'user', content:'[tool result]\n' + m.content });
-  });
-
-  const t = $('ai-thread');
-
-  for (let step = 0; step < 8; step++) {
-    const typing = document.createElement('div');
-    typing.className = 'ai-typing';
-    typing.textContent = step === 0 ? 'Thinking' : 'Working';
-    t.appendChild(typing); t.scrollTop = t.scrollHeight;
-
-    let reply;
-    try {
-      const res = await aiFetch('/chat/completions', {
-        model: S.aiModel, messages, max_tokens: 2048
-      });
-      reply = (res.choices?.[0]?.message?.content || '').trim();
-    } finally {
-      typing.remove();
-    }
-
-    const call = parseToolCall(reply);
-
-    // Plain answer → done. But if the reply LOOKS like an attempted tool call
-    // that failed to parse (has "tool" and braces), tell the model so, and let
-    // it retry in a cleaner form rather than silently ending the turn.
-    if (!call) {
-      if (/"tool"\s*:/.test(reply) && step < 7) {
-        messages.push({ role:'assistant', content: reply });
-        messages.push({ role:'user', content:
-          '[system] That was not valid JSON I could run. Reply with ONLY a single JSON object like {"tool":"write_file","args":{...}} and nothing else — no prose, no code fences.' });
-        continue;
-      }
-      S.aiChat.push({ role:'ai', content: reply || '(the model returned an empty response — try again, or switch models)' });
-      messages.push({ role:'assistant', content: reply });
-      renderChat();
-      return;
-    }
-
-    const tool = AI_TOOLS[call.tool];
-    if (!tool) {
-      const err = 'Unknown tool: ' + call.tool;
-      messages.push({ role:'assistant', content: reply });
-      messages.push({ role:'user', content: '[tool result]\n' + err });
-      continue;
-    }
-
-    // A write waits for the user.
-    if (tool.write) {
-      if (!S.repo && call.tool !== 'create_repo' && call.tool !== 'list_repos') {
-        messages.push({ role:'user', content:'[tool result]\nNo repo open; cannot run ' + call.tool });
-        continue;
-      }
-      const ok = await approveGate(call.tool, call.args);
-      if (!ok) {
-        messages.push({ role:'assistant', content: reply });
-        messages.push({ role:'user', content:'[tool result]\nUser skipped this action.' });
-        continue;
-      }
-    }
-
-    // Run it.
-    let result;
-    try {
-      result = await tool.run(call.args || {});
-    } catch (e) {
-      result = 'error: ' + e.message;
-    }
-
-    // A write that touched the tree should refresh the view underneath.
-    if (tool.write) { toast(call.tool.replace(/_/g, ' ') + ' done'); }
-
-    S.aiChat.push({ role:'tool', content: result });
-    messages.push({ role:'assistant', content: reply });
-    messages.push({ role:'user', content: '[tool result]\n' + result });
-    renderChat();
-  }
-
-  S.aiChat.push({ role:'ai', content: 'Stopped after 8 steps — ask me to continue if there is more to do.' });
-  renderChat();
-}
-
-/* Pull a tool call out of a reply.
-
-   Free models are messy: they wrap the JSON in ```code``` fences, prefix it with
-   "Sure, here you go:", or embed multi-line file content with its own braces and
-   quotes. A naive [^{}] regex breaks on all of those. Instead this scans for the
-   first '{' and walks forward matching braces (respecting strings) to find the
-   matching '}', which handles nested objects and newlines correctly. */
-function parseToolCall(text){
-  if (!text) return null;
-
-  // Every position where a JSON object might start.
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] !== '{') continue;
-    const slice = extractObject(text, i);
-    if (!slice) continue;
-    try {
-      const obj = JSON.parse(repairJson(slice));
-      if (obj && typeof obj.tool === 'string' && AI_TOOLS[obj.tool]) return obj;
-    } catch { /* not valid JSON here; keep scanning */ }
-  }
-  return null;
-}
-
-/* Free models emit real newlines and tabs INSIDE JSON string values — a README
-   with line breaks, code with indentation. Strict JSON forbids that, so
-   JSON.parse throws and the tool call is lost (the "(no reply)" bug). This
-   escapes control characters that fall inside a string, so the parse succeeds. */
-function repairJson(str){
-  let out = '', inStr = false, esc = false;
-  for (const c of str){
-    if (inStr){
-      if (esc){ out += c; esc = false; continue; }
-      if (c === '\\'){ out += c; esc = true; continue; }
-      if (c === '"'){ out += c; inStr = false; continue; }
-      if (c === '\n'){ out += '\\n'; continue; }
-      if (c === '\r'){ out += '\\r'; continue; }
-      if (c === '\t'){ out += '\\t'; continue; }
-      out += c;
-    } else {
-      if (c === '"') inStr = true;
-      out += c;
-    }
-  }
-  return out;
-}
-
-/* From an opening brace, return the balanced {...} substring, or null. Tracks
-   string state so a brace or quote inside a JSON string does not fool it. */
-function extractObject(text, start){
-  let depth = 0, inStr = false, esc = false;
-  for (let i = start; i < text.length; i++) {
-    const c = text[i];
-    if (inStr) {
-      if (esc) esc = false;
-      else if (c === '\\') esc = true;
-      else if (c === '"') inStr = false;
-    } else {
-      if (c === '"') inStr = true;
-      else if (c === '{') depth++;
-      else if (c === '}') { depth--; if (depth === 0) return text.slice(start, i + 1); }
-    }
-  }
-  return null;   // never closed
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -4793,10 +4322,53 @@ function prSheet(){
       <label for="pbody">Description</label>
       <textarea id="pbody" rows="4"></textarea>
     </div>
+    <button class="btn wide" id="pprev">Preview changes</button>
+    <div id="pprevbox"></div>
+    <div style="height:12px"></div>
     <button class="btn solid wide" id="pgo">Open pull request</button>
     <div style="height:10px"></div>
     <button class="btn wide" onclick="closeSheet()">Cancel</button>
-  `, () => { $('pgo').onclick = doPR; });
+  `, () => {
+    $('pgo').onclick = doPR;
+    $('pprev').onclick = previewPR;
+  });
+}
+
+/* Show what this PR would contain before opening it — base…head, GitHub's own
+   comparison, with the files and a summary. */
+async function previewPR(){
+  const box = $('pprevbox');
+  box.innerHTML = '<div class="empty">Comparing…</div>';
+  try {
+    const cmp = await api.compare(S.repo.owner, S.repo.name, S.repo.default_branch, S.branch);
+
+    if (!cmp.commits.length) {
+      box.innerHTML = `<div class="overwrite">${S.branch} is not ahead of ${S.repo.default_branch}. There is nothing to open a pull request for.</div>`;
+      return;
+    }
+
+    const files = cmp.files || [];
+    const add = files.reduce((n, f) => n + (f.additions || 0), 0);
+    const del = files.reduce((n, f) => n + (f.deletions || 0), 0);
+
+    box.innerHTML = `
+      <div class="overwrite" style="margin-top:12px">
+        <b>${cmp.commits.length}</b> commit${cmp.commits.length === 1 ? '' : 's'} ·
+        <span style="color:var(--add-fg)">+${add}</span>
+        <span style="color:var(--del-fg)">−${del}</span> ·
+        ${files.length} file${files.length === 1 ? '' : 's'}
+      </div>
+      <div class="prevfiles">
+        ${files.slice(0, 30).map(f => `
+          <div class="prevfile">
+            <span class="n">${esc(f.filename)}</span>
+            <span class="s"><span class="a">+${f.additions}</span> <span class="d">−${f.deletions}</span></span>
+          </div>`).join('')}
+        ${files.length > 30 ? `<div class="fdnote">…and ${files.length - 30} more</div>` : ''}
+      </div>`;
+  } catch (e) {
+    box.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
 }
 
 async function doPR(){
@@ -5250,16 +4822,6 @@ function paintBackend(){
 $('assetpick').addEventListener('change', e => {
   takeAsset(e.target.files);
   e.target.value = '';        // so picking the same file twice still fires
-});
-
-// AI composer wiring
-$('ai-send').onclick = aiSend;
-$('ai-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); aiSend(); }
-});
-$('ai-input').addEventListener('input', e => {
-  e.target.style.height = 'auto';
-  e.target.style.height = Math.min(e.target.scrollHeight, window.innerHeight * 0.4) + 'px';
 });
 
 (async function boot(){
