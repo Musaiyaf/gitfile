@@ -3631,9 +3631,17 @@ Rules:
 
     const call = parseToolCall(reply);
 
-    // Plain answer → done.
+    // Plain answer → done. But if the reply LOOKS like an attempted tool call
+    // that failed to parse (has "tool" and braces), tell the model so, and let
+    // it retry in a cleaner form rather than silently ending the turn.
     if (!call) {
-      S.aiChat.push({ role:'ai', content: reply || '(no reply)' });
+      if (/"tool"\s*:/.test(reply) && step < 7) {
+        messages.push({ role:'assistant', content: reply });
+        messages.push({ role:'user', content:
+          '[system] That was not valid JSON I could run. Reply with ONLY a single JSON object like {"tool":"write_file","args":{...}} and nothing else — no prose, no code fences.' });
+        continue;
+      }
+      S.aiChat.push({ role:'ai', content: reply || '(the model returned an empty response — try again, or switch models)' });
       messages.push({ role:'assistant', content: reply });
       renderChat();
       return;
@@ -3682,28 +3690,69 @@ Rules:
   renderChat();
 }
 
-/* Pull a tool call out of a reply. Free models wrap JSON in prose or code
-   fences as often as not, so this is forgiving: find the first {...} that names
-   a tool. */
+/* Pull a tool call out of a reply.
+
+   Free models are messy: they wrap the JSON in ```code``` fences, prefix it with
+   "Sure, here you go:", or embed multi-line file content with its own braces and
+   quotes. A naive [^{}] regex breaks on all of those. Instead this scans for the
+   first '{' and walks forward matching braces (respecting strings) to find the
+   matching '}', which handles nested objects and newlines correctly. */
 function parseToolCall(text){
   if (!text) return null;
 
-  // strip a code fence if the JSON is inside one
-  const fenced = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
-  const candidates = [];
-  if (fenced) candidates.push(fenced[1]);
-
-  // any brace-balanced object containing "tool"
-  const m = text.match(/\{[^{}]*"tool"[^{}]*\}/);
-  if (m) candidates.push(m[0]);
-
-  for (const c of candidates) {
+  // Every position where a JSON object might start.
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== '{') continue;
+    const slice = extractObject(text, i);
+    if (!slice) continue;
     try {
-      const obj = JSON.parse(c);
-      if (obj && obj.tool && AI_TOOLS[obj.tool]) return obj;
-    } catch { /* try the next candidate */ }
+      const obj = JSON.parse(repairJson(slice));
+      if (obj && typeof obj.tool === 'string' && AI_TOOLS[obj.tool]) return obj;
+    } catch { /* not valid JSON here; keep scanning */ }
   }
   return null;
+}
+
+/* Free models emit real newlines and tabs INSIDE JSON string values — a README
+   with line breaks, code with indentation. Strict JSON forbids that, so
+   JSON.parse throws and the tool call is lost (the "(no reply)" bug). This
+   escapes control characters that fall inside a string, so the parse succeeds. */
+function repairJson(str){
+  let out = '', inStr = false, esc = false;
+  for (const c of str){
+    if (inStr){
+      if (esc){ out += c; esc = false; continue; }
+      if (c === '\\'){ out += c; esc = true; continue; }
+      if (c === '"'){ out += c; inStr = false; continue; }
+      if (c === '\n'){ out += '\\n'; continue; }
+      if (c === '\r'){ out += '\\r'; continue; }
+      if (c === '\t'){ out += '\\t'; continue; }
+      out += c;
+    } else {
+      if (c === '"') inStr = true;
+      out += c;
+    }
+  }
+  return out;
+}
+
+/* From an opening brace, return the balanced {...} substring, or null. Tracks
+   string state so a brace or quote inside a JSON string does not fool it. */
+function extractObject(text, start){
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+    } else {
+      if (c === '"') inStr = true;
+      else if (c === '{') depth++;
+      else if (c === '}') { depth--; if (depth === 0) return text.slice(start, i + 1); }
+    }
+  }
+  return null;   // never closed
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
