@@ -483,6 +483,19 @@ pre.log{
 @keyframes pulse{ 0%,100%{ opacity:1 } 50%{ opacity:.25 } }
 @media (prefers-reduced-motion:reduce){ .step.live .g{ animation:none; } }
 
+/* ══ New-repository option rows ══════════════════════════════ */
+.reporow{
+  display:flex; align-items:center; gap:12px;
+  padding:12px 0; border-top:1px solid var(--border);
+  font-size:14px; cursor:pointer;
+}
+.reporow:first-of-type{ border-top:0; }
+.reporow > div{ flex:1; min-width:0; }
+.reporow b{ color:var(--fg); font-weight:600; display:block; }
+.reporow small{ color:var(--fg-muted); font-size:12px; }
+.reporow .pick{ color:var(--accent); font-size:13px; font-weight:500; flex:none; }
+.reporow.check .box{ flex:none; }
+
 /* ══ About ═══════════════════════════════════════════════════ */
 .about{ text-align:center; padding:8px 0 20px; }
 .about .mark{
@@ -901,6 +914,7 @@ const S = {
   runId:   null,   // the Actions run being watched
   asked:   new Set(), // runs we have already offered the artifact for
   rel:     null,   // the release being viewed
+  newRepo: null,   // the create-repo form, preserved across template pickers
   attachTo:null,   // the release a picked file is destined for
   poll:    null,   // its polling timer
   wrap:    false   // word wrap in the editor
@@ -1038,6 +1052,11 @@ const api = {
   /* Repositories themselves. Both of these need the token's Administration
      permission set to read and write. */
   createRepo: (body)       => gh('/user/repos', { method:'POST', body }),
+
+  /* GitHub's own template lists. ~350 gitignore names and ~14 licenses — far
+     too many to hardcode, and they change. Fetch them once, cache for the tab. */
+  gitignoreList: () => gh('/gitignore/templates'),
+  licenseList:   () => gh('/licenses'),
   patchRepo:  (o, r, body) => gh(`/repos/${o}/${r}`, { method:'PATCH', body }),
 
   makePR:    (o, r, body)  => gh(`/repos/${o}/${r}/pulls`, { method:'POST', body }),
@@ -2942,45 +2961,149 @@ async function doToggleVisibility(){
 
 
 /* --- 7a4. New repository ------------------------------------ */
-function newRepoSheet(){
+/* The template lists, fetched once and kept for the session. */
+let GITIGNORES = null, LICENSES = null;
+
+async function newRepoSheet(){
+  // What the repo will be initialised with. GitHub calls these "auto-init
+  // choices"; we track them here as the pickers change them.
+  S.newRepo = { gitignore: '', license: '', readme: true, private: true };
+
   sheet('New repository', `
     <div class="field">
-      <label for="rname">Name</label>
+      <label for="rname">Repository name *</label>
       <input type="text" id="rname" placeholder="my-project" spellcheck="false" autocapitalize="off">
     </div>
+
     <div class="field">
       <label for="rdesc">Description</label>
-      <input type="text" id="rdesc" placeholder="optional">
+      <input type="text" id="rdesc" placeholder="Optional">
     </div>
-    <div class="field">
-      <label class="check">
-        <input type="checkbox" id="rpriv" checked>
-        <span class="box"></span>
-        Private
-      </label>
+
+    <div class="reporow" id="row-vis">
+      <div><b>Visibility</b><small id="vis-sub">Private — only you can see it</small></div>
+      <span class="pick" id="vis-val">Private ▾</span>
     </div>
-    <button class="btn solid wide" id="rgo">Create</button>
+
+    <label class="reporow check" style="cursor:pointer">
+      <div><b>Add a README</b><small>A file to describe the project</small></div>
+      <input type="checkbox" id="r-readme" checked>
+      <span class="box"></span>
+    </label>
+
+    <div class="reporow" id="row-ignore">
+      <div><b>Add .gitignore</b><small id="ign-sub">None</small></div>
+      <span class="pick" id="ign-val">Choose ▾</span>
+    </div>
+
+    <div class="reporow" id="row-license">
+      <div><b>Add a license</b><small id="lic-sub">None</small></div>
+      <span class="pick" id="lic-val">Choose ▾</span>
+    </div>
+
+    <div style="height:16px"></div>
+    <button class="btn solid wide" id="rgo">Create repository</button>
     <div style="height:10px"></div>
     <button class="btn wide" onclick="closeSheet()">Cancel</button>
-  `, () => { $('rgo').onclick = doNewRepo; });
+  `, () => {
+    $('rgo').onclick = doNewRepo;
+
+    $('row-vis').onclick = () => {
+      const priv = !S.newRepo.private;
+      S.newRepo.private = priv;
+      $('vis-val').textContent = (priv ? 'Private' : 'Public') + ' ▾';
+      $('vis-sub').textContent = priv ? 'Private — only you can see it'
+                                      : 'Public — anyone can see it';
+    };
+
+    $('r-readme').onchange = e => { S.newRepo.readme = e.target.checked; };
+
+    $('row-ignore').onclick  = () => pickTemplate('gitignore');
+    $('row-license').onclick = () => pickTemplate('license');
+  });
+}
+
+/* A searchable picker, the way GitHub does it — the list is long enough that
+   scrolling it is pointless without a filter. */
+async function pickTemplate(kind){
+  const title = kind === 'gitignore' ? 'Choose a .gitignore template' : 'Choose a license';
+
+  sheet(title, '<div class="empty">Loading…</div>');
+
+  let items;
+  try {
+    if (kind === 'gitignore') {
+      GITIGNORES = GITIGNORES || await api.gitignoreList();
+      items = ['None', ...GITIGNORES];
+    } else {
+      LICENSES = LICENSES || await api.licenseList();
+      items = [{ key:'', name:'None' }, ...LICENSES];
+    }
+  } catch (e) {
+    $('sheetbody').innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    return;
+  }
+
+  const render = filter => {
+    const f = filter.toLowerCase();
+    const list = kind === 'gitignore'
+      ? items.filter(n => n.toLowerCase().includes(f))
+      : items.filter(l => l.name.toLowerCase().includes(f));
+
+    return list.slice(0, 200).map(it => {
+      const label = kind === 'gitignore' ? it : it.name;
+      const value = kind === 'gitignore' ? (it === 'None' ? '' : it) : it.key;
+      return `<button class="row" data-v="${esc(value)}" data-l="${esc(label)}">
+                <span class="name">${esc(label)}</span></button>`;
+    }).join('');
+  };
+
+  $('sheetbody').innerHTML = `
+    <input type="text" id="tpl-q" placeholder="Search…" spellcheck="false" autocapitalize="off">
+    <div id="tpl-list" style="max-height:52vh; overflow:auto; margin-top:8px"></div>`;
+
+  const paint = () => { $('tpl-list').innerHTML = render($('tpl-q').value); wire(); };
+  const wire = () => {
+    $('tpl-list').querySelectorAll('.row').forEach(el => {
+      el.onclick = () => {
+        const v = el.dataset.v, l = el.dataset.l;
+        if (kind === 'gitignore') { S.newRepo.gitignore = v; S.newRepo.gitignoreLabel = l; }
+        else                      { S.newRepo.license   = v; S.newRepo.licenseLabel   = l; }
+        repoFormBack();
+      };
+    });
+  };
+
+  $('tpl-q').addEventListener('input', paint);
+  paint();
+  setTimeout(() => $('tpl-q').focus(), 60);
 }
 
 async function doNewRepo(){
   const btn  = $('rgo');
-  const name = $('rname').value.trim();
-  if (!name) { toast('Give it a name.'); return; }
+  const r    = S.newRepo;
+  const name = ($('rname') ? $('rname').value : r.name).trim();
+  if (!name) { toast('A repository needs a name.'); return; }
+  r.name = name;
+  r.desc = ($('rdesc') ? $('rdesc').value : r.desc).trim();
 
   busy(btn, true, 'Creating…');
   try {
-    // auto_init matters: without it the repo has no commits and therefore no
-    // branches at all, and there is literally nothing to open.
-    const repo = await api.createRepo({
+    const body = {
       name,
-      description: $('rdesc').value.trim(),
-      private:     $('rpriv').checked,
+      description: r.desc,
+      private:     r.private,
+      // README, .gitignore and license each create the initial commit; force
+      // auto_init on regardless, because without a first commit the repo has no
+      // branch and there is nothing to open.
       auto_init:   true
-    });
+    };
+    if (r.gitignore) body.gitignore_template = r.gitignore;
+    if (r.license)   body.license_template   = r.license;
 
+    const repo = await api.createRepo(body);
+
+    S.newRepo = null;
     closeSheet();
     toast('Created ' + repo.full_name);
     await openRepo({
@@ -2990,7 +3113,7 @@ async function doNewRepo(){
       private: repo.private
     });
   } catch (e) {
-    toast(e.message, 6000);
+    toast(e.status === 422 ? 'That name is already taken, or is not allowed.' : e.message, 6000);
   } finally {
     busy(btn, false);
   }
@@ -3806,6 +3929,54 @@ function permsSheet(){
 
     <button class="btn wide" onclick="closeSheet()">Close</button>
   `);
+}
+
+/* The running APK knows its own version. Asking it beats a constant that goes
+   stale the first time someone forgets to bump it. */
+const appVersion = () =>
+  (window.Native && window.Native.version) ? window.Native.version() : 'web';
+
+const REPO_URL = 'https://github.com/Musaiyaf/gitfile';
+
+function aboutSheet(){
+  sheet('About', `
+    <div style="text-align:center; padding:8px 0 20px">
+      <div style="font-size:42px; line-height:1; margin-bottom:12px">▤</div>
+      <div style="font-size:20px; font-weight:600; color:var(--fg)">gitfile</div>
+      <div style="font-size:12px; color:var(--fg-muted); font-family:var(--mono); margin-top:4px">
+        ${esc(appVersion())}
+      </div>
+    </div>
+
+    <p class="hint" style="margin-bottom:16px; font-size:13px; line-height:1.6">
+      A GitHub repository file manager for Android. Browse, edit, commit, branch,
+      open and merge pull requests, run workflows, and install what they build —
+      all from a phone.
+    </p>
+
+    <div class="overwrite">
+      Built by <b>Musaiyaf</b><br>
+      A single HTML file in a WebView shell.<br>
+      Built and signed by GitHub Actions.<br>
+      MIT licensed.
+    </div>
+
+    <p class="hint" style="margin-bottom:16px">
+      gitfile talks only to <b>api.github.com</b>. Your token is kept in this app's
+      private storage on this device and is sent nowhere else. There is no server,
+      no account, and no analytics.
+    </p>
+
+    <div class="sheetlist">
+      <button id="ab-repo">Source code<small>github.com/Musaiyaf/gitfile</small></button>
+      <button id="ab-token">Manage your token<small>Revoke it, or change its permissions</small></button>
+    </div>
+    <button class="btn wide" onclick="closeSheet()">Close</button>
+  `, () => {
+    const open = url => () => window.Native ? window.Native.openUrl(url) : window.open(url, '_blank');
+    $('ab-repo').onclick  = open(REPO_URL);
+    $('ab-token').onclick = open('https://github.com/settings/tokens?type=beta');
+  });
 }
 
 function toggleWrap(){
