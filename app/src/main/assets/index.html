@@ -517,6 +517,81 @@ pre.log{
 .perms div span{ font-family:var(--mono); font-size:11px; color:var(--accent); flex:none; }
 .perms p{ font-size:12px; color:var(--fg-muted); margin:0 0 4px; line-height:1.5; }
 
+/* ══ Issues ══════════════════════════════════════════════════ */
+.issrow{
+  display:flex; align-items:flex-start; gap:12px;
+  width:100%; padding:12px 16px; border:0; border-top:1px solid var(--border);
+  background:none; color:var(--fg); font:inherit; text-align:left; cursor:pointer;
+}
+.issrow:first-child{ border-top:0; }
+.issrow:hover{ background:var(--subtle); }
+.issrow .ic{ flex:none; font-size:15px; margin-top:1px; }
+.issrow .ic.open{ color:var(--green-fg); }
+.issrow .ic.closed{ color:#A371F7; }         /* GitHub's closed-issue purple */
+.issrow .body{ flex:1; min-width:0; }
+.issrow .t{ font-size:15px; font-weight:500; color:var(--fg); display:block; }
+.issrow:hover .t{ color:var(--accent); }
+.issrow .sub{ font-size:12px; color:var(--fg-muted); margin-top:2px; }
+
+.statetabs{ display:flex; gap:16px; padding:0 0 12px; }
+.statetabs button{
+  background:none; border:0; color:var(--fg-muted); font:inherit; font-size:14px;
+  font-weight:500; cursor:pointer; padding:4px 0;
+}
+.statetabs button.on{ color:var(--fg); font-weight:600; }
+
+/* One issue and its thread */
+.ihead{ border-bottom:1px solid var(--border); padding-bottom:16px; margin-bottom:16px; }
+.ihead .t{ font-size:22px; font-weight:600; color:var(--fg); }
+.ihead .n{ color:var(--fg-muted); font-weight:400; }
+.istate{
+  display:inline-flex; align-items:center; gap:6px;
+  border-radius:2em; padding:4px 12px; font-size:13px; font-weight:600;
+  margin:10px 0; color:#fff;
+}
+.istate.open{ background:var(--green); }
+.istate.closed{ background:#8250DF; }
+.ihead .meta{ font-size:13px; color:var(--fg-muted); }
+
+.comment{ border:1px solid var(--border); border-radius:var(--r); margin-bottom:12px; }
+.comment .chead{
+  background:var(--inset); border-bottom:1px solid var(--border);
+  padding:8px 14px; font-size:13px; color:var(--fg-muted);
+}
+.comment .chead b{ color:var(--fg); font-weight:600; }
+.comment .cbody{ padding:14px; }
+.comment .cbody.md{ padding:14px; }
+
+/* ══ Repo settings ═══════════════════════════════════════════ */
+.setgroup{ margin-bottom:28px; }
+.setgroup > h2{
+  font-size:16px; font-weight:600; color:var(--fg);
+  padding-bottom:8px; margin-bottom:12px; border-bottom:1px solid var(--border);
+}
+.setrow{ padding:12px 0; border-bottom:1px solid var(--border); }
+.setrow:last-child{ border-bottom:0; }
+.setrow .lbl{ font-size:14px; font-weight:600; color:var(--fg); }
+.setrow .desc{ font-size:12px; color:var(--fg-muted); margin-top:2px; }
+.setrow.toggle{ display:flex; align-items:flex-start; gap:12px; cursor:pointer; }
+.setrow.toggle > div{ flex:1; min-width:0; }
+
+.danger{
+  border:1px solid var(--red); border-radius:var(--r);
+  padding:0 16px; margin-top:8px;
+}
+.danger .setrow{ border-color:rgba(248,81,73,.25); }
+.danger h2{ color:var(--red); border:0; }
+.dangerrow{
+  display:flex; align-items:center; gap:12px;
+  padding:14px 0; border-top:1px solid rgba(248,81,73,.2);
+}
+.dangerrow:first-child{ border-top:0; }
+.dangerrow > div{ flex:1; min-width:0; }
+.dangerrow .lbl{ font-size:14px; font-weight:600; color:var(--fg); }
+.dangerrow .desc{ font-size:12px; color:var(--fg-muted); margin-top:2px; }
+.dangerrow .btn{ flex:none; border-color:var(--red); color:var(--red); }
+.dangerrow .btn:hover{ background:var(--red); color:#fff; }
+
 /* ══ Releases ════════════════════════════════════════════════ */
 .rel{
   border:1px solid var(--border); border-radius:var(--r);
@@ -811,6 +886,10 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
 
     <section class="view" id="v-prs"></section>
 
+    <section class="view" id="v-issues"></section>
+    <section class="view" id="v-issue"></section>
+    <section class="view" id="v-settings"></section>
+
   </main>
 
   <!-- ── Bottom action bar ────────────────────────────────── -->
@@ -915,6 +994,9 @@ const S = {
   asked:   new Set(), // runs we have already offered the artifact for
   rel:     null,   // the release being viewed
   newRepo: null,   // the create-repo form, preserved across template pickers
+  issue:   null,   // the issue being viewed
+  issueState: 'open',
+  fullRepo: null,  // the complete repo object, for settings
   attachTo:null,   // the release a picked file is destined for
   poll:    null,   // its polling timer
   wrap:    false   // word wrap in the editor
@@ -1107,6 +1189,20 @@ const api = {
   delRelease:(o, r, id)      => gh(`/repos/${o}/${r}/releases/${id}`, { method:'DELETE' }),
   delAsset:  (o, r, id)      => gh(`/repos/${o}/${r}/releases/assets/${id}`, { method:'DELETE' }),
   tags:      (o, r)          => gh(`/repos/${o}/${r}/tags?per_page=50`),
+
+  /* Issues. GitHub's issues endpoint also returns PRs, so every read filters
+     them out — a PR is an issue with a pull_request field, and showing them here
+     would double-count against the Pull requests tab. */
+  issues:    (o, r, state)   => gh(`/repos/${o}/${r}/issues?state=${state}&per_page=50`),
+  issue:     (o, r, n)       => gh(`/repos/${o}/${r}/issues/${n}`),
+  issueComments: (o, r, n)   => gh(`/repos/${o}/${r}/issues/${n}/comments?per_page=100`),
+  makeIssue: (o, r, body)    => gh(`/repos/${o}/${r}/issues`, { method:'POST', body }),
+  comment:   (o, r, n, body) => gh(`/repos/${o}/${r}/issues/${n}/comments`, { method:'POST', body }),
+  patchIssue:(o, r, n, body) => gh(`/repos/${o}/${r}/issues/${n}`, { method:'PATCH', body }),
+
+  /* Repo settings. patchRepo already exists for visibility; these round it out. */
+  setDefaultBranch: (o, r, branch) => gh(`/repos/${o}/${r}`, { method:'PATCH', body:{ default_branch: branch } }),
+  deleteRepo:(o, r)          => gh(`/repos/${o}/${r}`, { method:'DELETE' }),
   rerun:     (o, r, id) => gh(`/repos/${o}/${r}/actions/runs/${id}/rerun`,   { method:'POST' }),
 
   delRef:    (o, r, branch) =>
@@ -1203,11 +1299,20 @@ window.appBack = () => {
       openReleases();
       return true;
 
+    case 'issue':
+      openIssues(S.issueState || 'open');
+      return true;
+
+    case 'settings':
+      loadTree(S.path);
+      return true;
+
     case 'search':
     case 'log':
     case 'actions':
     case 'prs':
     case 'releases':
+    case 'issues':
       loadTree(S.path);
       return true;
 
@@ -1250,6 +1355,7 @@ function paintRef(){
    ──────────────────────────────────────────────────────────────────────── */
 const TABS = [
   { id:'code',    label:'Code',          go:() => loadTree(S.path) },
+  { id:'issues',  label:'Issues',        go:openIssues },
   { id:'prs',     label:'Pull requests', go:openPRs },
   { id:'actions', label:'Actions',       go:openActions },
   { id:'releases',label:'Releases',      go:openReleases },
@@ -1263,8 +1369,10 @@ function paintTabs(){
 
   // As far as the tab strip is concerned, the file editor is still "Code".
   let here = (S.view === 'tree' || S.view === 'file') ? 'code' : S.view;
-  if (here === 'run')     here = 'actions';    // a run belongs to Actions
-  if (here === 'release') here = 'releases';   // and a release to Releases
+  if (here === 'run')      here = 'actions';    // a run belongs to Actions
+  if (here === 'release')  here = 'releases';   // and a release to Releases
+  if (here === 'issue')    here = 'issues';     // and an issue to Issues
+  if (here === 'settings') here = 'code';       // settings has no tab of its own
 
   t.innerHTML = '';
   TABS.forEach(tab => {
@@ -1982,18 +2090,17 @@ function repoSheet(){
       <button id="r-runs">Actions<small>Watch the build that ships this app</small></button>
       ${canPR ? `<button id="r-pr">Open pull request<small>${S.branch} → ${S.repo.default_branch}</small></button>` : ''}
       ${canPR ? `<button id="r-delbr">Delete branch<small>Removes ${S.branch}. The commits survive in any PR.</small></button>` : ''}
-      <button id="r-vis">Make ${priv ? 'public' : 'private'}<small>${
-        priv ? 'Anyone on GitHub will be able to read this repository'
-             : 'Only you will be able to see this repository'
-      }</small></button>
+      <button id="r-issues">Issues<small>Report, discuss, track</small></button>
+      <button id="r-settings">Settings<small>Rename, default branch, features, danger zone</small></button>
     </div>
     <button class="btn wide" onclick="closeSheet()">Close</button>
   `, () => {
-    $('r-search').onclick = () => { closeSheet(); openSearch(); };
-    $('r-log').onclick    = () => { closeSheet(); openLog(null); };
-    $('r-prs').onclick    = () => { closeSheet(); openPRs(); };
-    $('r-runs').onclick   = () => { closeSheet(); openActions(); };
-    $('r-vis').onclick    = doToggleVisibility;
+    $('r-search').onclick   = () => { closeSheet(); openSearch(); };
+    $('r-log').onclick      = () => { closeSheet(); openLog(null); };
+    $('r-prs').onclick      = () => { closeSheet(); openPRs(); };
+    $('r-runs').onclick     = () => { closeSheet(); openActions(); };
+    $('r-issues').onclick   = () => { closeSheet(); openIssues('open'); };
+    $('r-settings').onclick = () => { closeSheet(); openSettings(); };
     if ($('r-pr'))    $('r-pr').onclick    = prSheet;
     if ($('r-delbr')) $('r-delbr').onclick = doDeleteBranch;
   });
@@ -2855,6 +2962,349 @@ function openLogs(job){
     `${API}/repos/${S.repo.owner}/${S.repo.name}/actions/jobs/${job.id}/logs`,
     S.token,
     'onJobLog');
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   REPO SETTINGS
+
+   GitHub's Settings → General, minus the parts that need a paid plan or a
+   browser: rename, default branch, the feature toggles, and the Danger Zone.
+   ═══════════════════════════════════════════════════════════════════════ */
+async function openSettings(){
+  show('settings');
+  const v = $('v-settings');
+  v.innerHTML = '<div class="empty">Loading…</div>';
+  setBar([{ label:'Back', onClick:() => loadTree(S.path), solid:true }]);
+
+  try {
+    // The list view carries a thin, possibly stale repo object. Fetch the full
+    // one so every toggle reflects the real current state.
+    const R = await gh(`/repos/${S.repo.owner}/${S.repo.name}`);
+    S.fullRepo = R;
+
+    v.innerHTML = `
+      <div class="setgroup">
+        <h2>General</h2>
+        <div class="setrow">
+          <div class="lbl">Repository name</div>
+          <div style="display:flex; gap:8px; margin-top:8px">
+            <input type="text" id="set-name" value="${esc(R.name)}" style="flex:1">
+            <button class="btn small" id="set-rename">Rename</button>
+          </div>
+        </div>
+        <div class="setrow">
+          <div class="lbl">Description</div>
+          <div style="display:flex; gap:8px; margin-top:8px">
+            <input type="text" id="set-desc" value="${esc(R.description || '')}" placeholder="Optional" style="flex:1">
+            <button class="btn small" id="set-descsave">Save</button>
+          </div>
+        </div>
+        <div class="setrow">
+          <div class="lbl">Default branch</div>
+          <div class="desc">The base branch for new pull requests and commits.</div>
+          <select id="set-branch" style="margin-top:8px"></select>
+        </div>
+      </div>
+
+      <div class="setgroup">
+        <h2>Features</h2>
+        ${toggleRow('set-issues',   'Issues',       'Lightweight task tracking', R.has_issues)}
+        ${toggleRow('set-projects', 'Projects',     'Project boards on this repo', R.has_projects)}
+        ${toggleRow('set-wiki',     'Wikis',        'A wiki for documentation', R.has_wiki)}
+        ${toggleRow('set-disc',     'Discussions',  'Community conversations', R.has_discussions)}
+      </div>
+
+      <div class="danger">
+        <h2>Danger zone</h2>
+        <div class="dangerrow">
+          <div>
+            <div class="lbl">Change visibility</div>
+            <div class="desc">This repository is currently ${R.private ? 'private' : 'public'}.</div>
+          </div>
+          <button class="btn" id="set-vis">Make ${R.private ? 'public' : 'private'}</button>
+        </div>
+        <div class="dangerrow">
+          <div>
+            <div class="lbl">${R.archived ? 'Unarchive' : 'Archive'} this repository</div>
+            <div class="desc">${R.archived ? 'Make it writable again.' : 'Mark it read-only.'}</div>
+          </div>
+          <button class="btn" id="set-archive">${R.archived ? 'Unarchive' : 'Archive'}</button>
+        </div>
+        <div class="dangerrow">
+          <div>
+            <div class="lbl">Delete this repository</div>
+            <div class="desc">There is no going back. Be certain.</div>
+          </div>
+          <button class="btn" id="set-delete">Delete</button>
+        </div>
+      </div>`;
+
+    // Branch dropdown
+    const sel = $('set-branch');
+    try {
+      const branches = await api.branches(S.repo.owner, S.repo.name);
+      sel.innerHTML = branches.map(b =>
+        `<option ${b.name === R.default_branch ? 'selected' : ''}>${esc(b.name)}</option>`).join('');
+    } catch { sel.innerHTML = `<option>${esc(R.default_branch)}</option>`; }
+
+    wireSettings(R);
+
+  } catch (e) {
+    v.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+
+function toggleRow(id, label, desc, on){
+  return `
+    <label class="setrow toggle">
+      <div><div class="lbl">${label}</div><div class="desc">${desc}</div></div>
+      <input type="checkbox" id="${id}" ${on ? 'checked' : ''}>
+      <span class="box"></span>
+    </label>`;
+}
+
+function wireSettings(R){
+  const o = S.repo.owner, r = S.repo.name;
+
+  $('set-rename').onclick = async () => {
+    const name = $('set-name').value.trim();
+    if (!name || name === R.name) return;
+    if (!confirm('Rename to ' + name + '? Links to the old name will redirect.')) return;
+    try {
+      const up = await api.patchRepo(o, r, { name });
+      toast('Renamed to ' + up.name);
+      // The repo's name changed underneath us; reopen it fresh.
+      S.repo.name = up.name;
+      openSettings();
+    } catch (e) { toast(e.message, 6000); }
+  };
+
+  $('set-descsave').onclick = async () => {
+    try { await api.patchRepo(o, r, { description: $('set-desc').value }); toast('Saved'); }
+    catch (e) { toast(e.message, 6000); }
+  };
+
+  $('set-branch').onchange = async e => {
+    try { await api.setDefaultBranch(o, r, e.target.value); S.repo.default_branch = e.target.value; toast('Default branch is now ' + e.target.value); }
+    catch (err) { toast(err.message, 6000); }
+  };
+
+  const feature = (id, key) => {
+    $(id).onchange = async e => {
+      try { await api.patchRepo(o, r, { [key]: e.target.checked }); toast('Saved'); }
+      catch (err) { e.target.checked = !e.target.checked; toast(err.message, 6000); }
+    };
+  };
+  feature('set-issues',   'has_issues');
+  feature('set-projects', 'has_projects');
+  feature('set-wiki',     'has_wiki');
+  feature('set-disc',     'has_discussions');
+
+  $('set-vis').onclick = doToggleVisibility;
+
+  $('set-archive').onclick = async () => {
+    const to = !R.archived;
+    if (!confirm((to ? 'Archive' : 'Unarchive') + ' this repository?')) return;
+    try { await api.patchRepo(o, r, { archived: to }); toast(to ? 'Archived' : 'Unarchived'); openSettings(); }
+    catch (e) { toast(e.message, 6000); }
+  };
+
+  // Delete demands the full name typed out, exactly as GitHub does — it is the
+  // one action here with no undo.
+  $('set-delete').onclick = () => {
+    sheet('Delete repository', `
+      <div class="overwrite" style="border-color:var(--red)">
+        This permanently deletes <b>${esc(o)}/${esc(r)}</b>, its code, issues,
+        pull requests, releases and history. It cannot be undone.
+      </div>
+      <div class="field">
+        <label for="del-confirm">Type <b>${esc(r)}</b> to confirm</label>
+        <input type="text" id="del-confirm" spellcheck="false" autocapitalize="off">
+      </div>
+      <button class="btn danger wide" id="del-go" disabled>Delete this repository</button>
+      <div style="height:10px"></div>
+      <button class="btn wide" onclick="closeSheet()">Cancel</button>
+    `, () => {
+      $('del-confirm').addEventListener('input', e => {
+        $('del-go').disabled = e.target.value !== r;
+      });
+      $('del-go').onclick = async () => {
+        try {
+          await api.deleteRepo(o, r);
+          closeSheet();
+          toast('Deleted ' + r);
+          openRepos();
+        } catch (e) {
+          toast(e.status === 403 ? 'The token cannot delete repositories. Administration must be read and write.' : e.message, 6000);
+        }
+      };
+    });
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   ISSUES
+   ═══════════════════════════════════════════════════════════════════════ */
+async function openIssues(state){
+  state = state || 'open';
+  S.issueState = state;
+  show('issues');
+
+  const v = $('v-issues');
+  v.innerHTML = `
+    <div class="statetabs">
+      <button id="is-open"   class="${state === 'open'   ? 'on' : ''}">Open</button>
+      <button id="is-closed" class="${state === 'closed' ? 'on' : ''}">Closed</button>
+    </div>
+    <div class="filebox"><div id="isslist"><div class="empty">Loading…</div></div></div>`;
+
+  $('is-open').onclick   = () => openIssues('open');
+  $('is-closed').onclick = () => openIssues('closed');
+
+  setBar([
+    { label:'Back',      onClick:() => loadTree(S.path) },
+    { label:'New issue', onClick:newIssueSheet, solid:true, grow:true }
+  ]);
+
+  try {
+    const all = await api.issues(S.repo.owner, S.repo.name, state);
+    // GitHub's issues endpoint includes pull requests. Drop them — they have
+    // their own tab, and counting them here would be misleading.
+    const issues = all.filter(i => !i.pull_request);
+
+    const list = $('isslist');
+    if (!issues.length) { list.innerHTML = `<div class="empty">No ${state} issues.</div>`; return; }
+
+    list.innerHTML = '';
+    issues.forEach(i => {
+      const b = document.createElement('button');
+      b.className = 'issrow';
+      b.innerHTML = `
+        <span class="ic ${i.state}">${i.state === 'open' ? '◉' : '⊘'}</span>
+        <span class="body">
+          <span class="t">${esc(i.title)}</span>
+          <span class="sub">#${i.number} · ${esc(i.user.login)} · ${ago(i.created_at)}${
+            i.comments ? ' · ' + i.comments + ' comment' + (i.comments === 1 ? '' : 's') : ''
+          }</span>
+        </span>`;
+      b.onclick = () => openIssue(i.number);
+      list.appendChild(b);
+    });
+  } catch (e) {
+    $('isslist').innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+
+async function openIssue(n){
+  show('issue');
+  const v = $('v-issue');
+  v.innerHTML = '<div class="empty">Loading…</div>';
+
+  try {
+    const [iss, comments] = await Promise.all([
+      api.issue(S.repo.owner, S.repo.name, n),
+      api.issueComments(S.repo.owner, S.repo.name, n)
+    ]);
+    S.issue = iss;
+
+    v.innerHTML = `
+      <div class="ihead">
+        <div class="t">${esc(iss.title)} <span class="n">#${iss.number}</span></div>
+        <span class="istate ${iss.state}">${iss.state === 'open' ? '◉ Open' : '⊘ Closed'}</span>
+        <div class="meta">${esc(iss.user.login)} opened this ${ago(iss.created_at)} ago</div>
+      </div>
+
+      <div class="comment">
+        <div class="chead"><b>${esc(iss.user.login)}</b> · ${ago(iss.created_at)}</div>
+        <div class="cbody md">${iss.body ? markdown(iss.body) : '<p style="color:var(--fg-muted)">No description.</p>'}</div>
+      </div>
+
+      ${comments.map(c => `
+        <div class="comment">
+          <div class="chead"><b>${esc(c.user.login)}</b> · ${ago(c.created_at)}</div>
+          <div class="cbody md">${markdown(c.body)}</div>
+        </div>`).join('')}`;
+
+    setBar([
+      { label:'Back',    onClick:() => openIssues(S.issueState || 'open') },
+      { label:'Comment', onClick:() => commentSheet(iss) },
+      iss.state === 'open'
+        ? { label:'Close',  onClick:() => setIssueState(iss, 'closed'), solid:true }
+        : { label:'Reopen', onClick:() => setIssueState(iss, 'open'),   solid:true }
+    ]);
+  } catch (e) {
+    v.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    setBar([{ label:'Back', onClick:() => openIssues('open'), solid:true }]);
+  }
+}
+
+function newIssueSheet(){
+  sheet('New issue', `
+    <div class="field">
+      <label for="iss-title">Title *</label>
+      <input type="text" id="iss-title" placeholder="Something is wrong when…">
+    </div>
+    <div class="field">
+      <label for="iss-body">Description</label>
+      <textarea id="iss-body" rows="6" placeholder="Markdown. Optional."></textarea>
+    </div>
+    <button class="btn solid wide" id="iss-go">Create issue</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => { $('iss-go').onclick = doNewIssue; });
+}
+
+async function doNewIssue(){
+  const btn = $('iss-go');
+  const title = $('iss-title').value.trim();
+  if (!title) { toast('An issue needs a title.'); return; }
+
+  busy(btn, true, 'Creating…');
+  try {
+    const iss = await api.makeIssue(S.repo.owner, S.repo.name, {
+      title, body: $('iss-body').value
+    });
+    closeSheet();
+    toast('Opened #' + iss.number);
+    openIssue(iss.number);
+  } catch (e) {
+    // 410 = issues are switched off for this repo, in Settings.
+    toast(e.status === 410 ? 'Issues are disabled for this repository.' : e.message, 6000);
+  } finally {
+    busy(btn, false);
+  }
+}
+
+function commentSheet(iss){
+  sheet('Comment on #' + iss.number, `
+    <div class="field">
+      <label for="cm-body">Comment</label>
+      <textarea id="cm-body" rows="5" placeholder="Markdown"></textarea>
+    </div>
+    <button class="btn solid wide" id="cm-go">Comment</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => {
+    $('cm-go').onclick = async () => {
+      const body = $('cm-body').value.trim();
+      if (!body) { toast('Write something first.'); return; }
+      const btn = $('cm-go');
+      busy(btn, true, 'Posting…');
+      try {
+        await api.comment(S.repo.owner, S.repo.name, iss.number, { body });
+        closeSheet();
+        openIssue(iss.number);
+      } catch (e) { toast(e.message, 6000); busy(btn, false); }
+    };
+  });
+}
+
+async function setIssueState(iss, state){
+  try {
+    await api.patchIssue(S.repo.owner, S.repo.name, iss.number, { state });
+    toast(state === 'closed' ? 'Closed #' + iss.number : 'Reopened #' + iss.number);
+    openIssue(iss.number);
+  } catch (e) { toast(e.message, 6000); }
 }
 
 /* ── Pull requests ───────────────────────────────────────────────────── */
