@@ -4459,10 +4459,17 @@ async function doToggleVisibility(){
 /* The template lists, fetched once and kept for the session. */
 let GITIGNORES = null, LICENSES = null;
 
-async function newRepoSheet(){
+async function newRepoSheet(keep){
   // What the repo will be initialised with. GitHub calls these "auto-init
-  // choices"; we track them here as the pickers change them.
-  S.newRepo = { gitignore: '', license: '', readme: true, private: true };
+  // choices"; we track them here as the pickers change them. On a fresh open we
+  // start clean; when returning from the .gitignore / license picker we keep
+  // what was already chosen and typed (keep === true).
+  if (!keep || !S.newRepo) {
+    S.newRepo = { gitignore: '', license: '', gitignoreLabel: 'None',
+                  licenseLabel: 'None', readme: true, private: true,
+                  name: '', desc: '' };
+  }
+  const R = S.newRepo;
 
   sheet('New repository', `
     <div class="field">
@@ -4501,22 +4508,50 @@ async function newRepoSheet(){
     <div style="height:10px"></div>
     <button class="btn wide" onclick="closeSheet()">Cancel</button>
   `, () => {
+    // Repopulate from state so a round-trip through a picker doesn't wipe the
+    // name, description, visibility, or the other choice.
+    $('rname').value      = R.name || '';
+    $('rdesc').value      = R.desc || '';
+    $('r-readme').checked = R.readme;
+    $('vis-val').textContent = (R.private ? 'Private' : 'Public') + ' ▾';
+    $('vis-sub').textContent = R.private ? 'Private — only you can see it'
+                                         : 'Public — anyone can see it';
+    $('ign-sub').textContent = R.gitignoreLabel || 'None';
+    $('ign-val').textContent = (R.gitignore ? 'Change' : 'Choose') + ' ▾';
+    $('lic-sub').textContent = R.licenseLabel || 'None';
+    $('lic-val').textContent = (R.license ? 'Change' : 'Choose') + ' ▾';
+
+    // Keep the text fields in state as they're typed, so they survive the jump
+    // to a picker and back.
+    $('rname').oninput = e => { R.name = e.target.value; };
+    $('rdesc').oninput = e => { R.desc = e.target.value; };
+
     $('rgo').onclick = doNewRepo;
 
     $('row-vis').onclick = () => {
-      const priv = !S.newRepo.private;
-      S.newRepo.private = priv;
+      const priv = !R.private;
+      R.private = priv;
       $('vis-val').textContent = (priv ? 'Private' : 'Public') + ' ▾';
       $('vis-sub').textContent = priv ? 'Private — only you can see it'
                                       : 'Public — anyone can see it';
     };
 
-    $('r-readme').onchange = e => { S.newRepo.readme = e.target.checked; };
+    $('r-readme').onchange = e => { R.readme = e.target.checked; };
 
-    $('row-ignore').onclick  = () => pickTemplate('gitignore');
-    $('row-license').onclick = () => pickTemplate('license');
+    $('row-ignore').onclick  = () => { saveRepoForm(); pickTemplate('gitignore'); };
+    $('row-license').onclick = () => { saveRepoForm(); pickTemplate('license'); };
   });
 }
+
+/* Snapshot the typed fields before navigating away to a picker sheet, so the
+   form comes back intact. repoFormBack is what the picker calls once a template
+   is chosen — its absence was why choosing a .gitignore or license did nothing. */
+function saveRepoForm(){
+  if (!S.newRepo) return;
+  if ($('rname')) S.newRepo.name = $('rname').value;
+  if ($('rdesc')) S.newRepo.desc = $('rdesc').value;
+}
+const repoFormBack = () => newRepoSheet(true);
 
 /* A searchable picker, the way GitHub does it — the list is long enough that
    scrolling it is pointless without a filter. */
@@ -5383,6 +5418,15 @@ $('gear').onclick = async () => {
     <div style="height:16px"></div>
     <button class="btn wide" onclick="closeSheet()">Close</button>
   `, () => {
+    // Show how many times gitfile's APK has been downloaded, beside the title.
+    gitfileInstalls().then(n => {
+      const t = $('sheettitle');
+      if (t) t.innerHTML = 'Settings <span style="font-weight:400; '
+        + 'font-size:11px; color:var(--fg-subtle); font-family:var(--mono); '
+        + 'margin-left:8px">⇩ ' + n.toLocaleString()
+        + (n === 1 ? ' install' : ' installs') + '</span>';
+    }).catch(() => {});
+
     $('s-desktop').onclick = async () => {
       const on = !desktop;
       await store.set(DESKTOP_KEY, on ? '1' : '0');
@@ -5439,6 +5483,24 @@ const appVersion = () =>
   (window.Native && window.Native.version) ? window.Native.version() : 'web';
 
 const REPO_URL = 'https://github.com/Musaiyaf/gitfile';
+
+/* ── Install count ────────────────────────────────────────────────────────
+   gitfile ships as an APK attached to its own GitHub releases, so the number
+   of times that APK has been downloaded is the closest thing to an install
+   count the API can give — GitHub records download_count per release asset.
+   Sum it across every .apk on every release. Cached for the session; any
+   failure is swallowed, since this is a nicety and never worth an error. */
+let INSTALLS = null;
+async function gitfileInstalls(){
+  if (INSTALLS !== null) return INSTALLS;
+  const rels = await gh('/repos/Musaiyaf/gitfile/releases?per_page=100');
+  let n = 0;
+  for (const rel of (rels || []))
+    for (const a of (rel.assets || []))
+      if (/\.apk$/i.test(a.name)) n += a.download_count || 0;
+  INSTALLS = n;
+  return n;
+}
 
 function aboutSheet(){
   sheet('About', `
