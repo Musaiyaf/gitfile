@@ -164,8 +164,11 @@ h1{
 }
 .filebox .row:first-child{ border-top:0; }
 .row:hover{ background:var(--subtle); }
-.row .glyph{ color:var(--fg-muted); width:16px; flex:none; font-size:13px; text-align:center; }
-.row.dir .glyph{ color:var(--accent); }
+.row .glyph{ color:var(--fg-muted); width:18px; flex:none; font-size:13px; text-align:center; }
+.row.dir .glyph, .glyph.g-dir{ color:var(--accent); }
+.glyph.g-img{ color:#A5D6FF; }
+.glyph.g-cfg{ color:var(--fg-subtle); }
+.glyph.g-doc{ color:var(--fg-muted); }
 .row .name{
   flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   color:var(--fg);
@@ -1075,6 +1078,7 @@ async function gh(path, opts = {}){
   if (!res.ok) {
     const err = new Error(ghMessage(res.status, data));
     err.status = res.status;
+    err.raw = data;                 // keep GitHub's exact payload for diagnosis
     throw err;
   }
   return data;
@@ -1087,7 +1091,20 @@ function ghMessage(status, data){
   if (status === 403) return 'Token lacks permission for this. Contents, Pull requests and Administration all need to be read and write.';
   if (status === 404) return 'Not found — or the token cannot see this repository.';
   if (status === 409) return 'Conflict. The branch moved. Reopen the file to get the current version.';
-  if (status === 422 && data?.errors?.length) return data.errors.map(e => e.message || e.code).join('. ');
+  if (status === 410) return 'This feature is turned off for the repository.';
+  if (status === 422) {
+    // GitHub's validation errors are often just a bare code like "invalid" with
+    // no message. Turn the useless ones into something actionable.
+    const parts = (data?.errors || []).map(e =>
+      e.message || (e.field ? `${e.field}: ${e.code}` : e.code)).filter(Boolean);
+    const detail = parts.join('. ');
+    if (!detail || detail === 'invalid') {
+      return data?.message
+        ? data.message + '.'
+        : 'GitHub rejected the request as invalid. If this is Issues, they may be turned off for the repository — enable them in Settings.';
+    }
+    return (data?.message ? data.message + ': ' : '') + detail;
+  }
   return data?.message || ('Request failed (' + status + ')');
 }
 
@@ -1584,6 +1601,59 @@ $('branchsel').onchange = async e => {
   await loadTree(S.path);
 };
 
+/* ── File and folder icons ────────────────────────────────────────────────
+   GitHub shows a distinct icon per file type. With no colour to lean on, the
+   distinction here is the glyph itself: a folder, a document, a picture frame,
+   a gear for config, and so on. Extension-driven, with a few special-cased
+   names GitHub also treats specially.
+   ──────────────────────────────────────────────────────────────────────── */
+const FILE_GLYPH = {
+  // code
+  js:'ᴊꜱ', jsx:'ᴊꜱ', ts:'ᴛꜱ', tsx:'ᴛꜱ', mjs:'ᴊꜱ', cjs:'ᴊꜱ',
+  java:'☕', kt:'◆', kts:'◆', py:'🐍', rb:'◆', go:'◆', rs:'◆',
+  c:'ⓒ', h:'ⓒ', cpp:'⧉', cs:'◆', swift:'◆', php:'◆', lua:'◆', dart:'◆',
+  // markup / style
+  html:'◇', htm:'◇', xml:'◇', svg:'▦', vue:'◇',
+  css:'▤', scss:'▤', sass:'▤', less:'▤',
+  // data / config
+  json:'⚙', yml:'⚙', yaml:'⚙', toml:'⚙', ini:'⚙', env:'⚙',
+  properties:'⚙', gradle:'⚙', lock:'⚿',
+  // docs
+  md:'❡', markdown:'❡', txt:'≡', pdf:'⬓', rtf:'≡',
+  // images
+  png:'▦', jpg:'▦', jpeg:'▦', gif:'▦', webp:'▦', bmp:'▦', ico:'▦', avif:'▦',
+  // archives / binaries
+  zip:'⬢', tar:'⬢', gz:'⬢', apk:'📦', jar:'⬢', aar:'⬢',
+  // shell
+  sh:'❯', bash:'❯', zsh:'❯', bat:'❯'
+};
+
+// Names GitHub gives a specific icon regardless of extension.
+const FILE_NAMED = {
+  'readme.md':'❡', 'readme':'❡', 'license':'⚖', 'license.md':'⚖',
+  '.gitignore':'◈', '.gitattributes':'◈',
+  'dockerfile':'⬡', 'makefile':'⚙',
+  'package.json':'⚙', 'settings.gradle':'⚙', 'build.gradle':'⚙'
+};
+
+function fileGlyph(it){
+  if (it.type === 'dir') return '▸';
+  const name = it.name.toLowerCase();
+  if (FILE_NAMED[name]) return FILE_NAMED[name];
+  const ext = name.includes('.') ? name.split('.').pop() : '';
+  return FILE_GLYPH[ext] || '▤';        // a plain document for anything unknown
+}
+
+function fileClass(name){
+  const n = name.toLowerCase();
+  const ext = n.includes('.') ? n.split('.').pop() : '';
+  if (/^(png|jpe?g|gif|webp|bmp|ico|avif|svg)$/.test(ext)) return 'g-img';
+  if (/^(json|ya?ml|toml|ini|env|properties|gradle|lock)$/.test(ext) ||
+      FILE_NAMED[n] === '⚙') return 'g-cfg';
+  if (/^(md|markdown|txt)$/.test(ext)) return 'g-doc';
+  return 'g-file';
+}
+
 async function loadTree(path){
   S.path = path;
   S.file = null;
@@ -1621,7 +1691,7 @@ async function loadTree(path){
       const b = document.createElement('button');
       b.className = 'rowmain';
       b.innerHTML = `
-        <span class="glyph">${it.type === 'dir' ? '▸' : '▤'}</span>
+        <span class="glyph ${it.type === 'dir' ? 'g-dir' : fileClass(it.name)}">${fileGlyph(it)}</span>
         <span class="name">${it.name}</span>
         <span class="meta">${it.type === 'dir' ? '' : bytes(it.size)}</span>`;
       b.onclick = () => it.type === 'dir' ? loadTree(it.path) : openFile(it.path);
@@ -3191,7 +3261,14 @@ async function openIssues(state){
       list.appendChild(b);
     });
   } catch (e) {
-    $('isslist').innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    // Show GitHub's own words, verbatim, plus the status. Whatever "invalid"
+    // really means, it will be in here.
+    const raw = e.raw ? JSON.stringify(e.raw, null, 1) : '';
+    $('isslist').innerHTML = `
+      <div class="empty" style="text-align:left">
+        <b>HTTP ${e.status || '?'}</b><br>${esc(e.message)}
+        ${raw ? `<pre style="margin-top:12px;white-space:pre-wrap;font-size:11px;color:var(--fg-subtle)">${esc(raw)}</pre>` : ''}
+      </div>`;
   }
 }
 
