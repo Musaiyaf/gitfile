@@ -501,6 +501,14 @@ pre.log{
 .reporow .pick{ color:var(--accent); font-size:13px; font-weight:500; flex:none; }
 .reporow.check .box{ flex:none; }
 
+/* ══ Profile ═════════════════════════════════════════════════ */
+.profhead{ display:flex; align-items:center; gap:14px; margin-bottom:16px; }
+.pavatar{ width:64px; height:64px; border-radius:50%; border:1px solid var(--border); }
+.pname{ font-size:20px; font-weight:600; color:var(--fg); }
+.plogin{ font-size:14px; color:var(--fg-muted); }
+.pstats{ display:flex; gap:18px; padding:12px 0 20px; border-bottom:1px solid var(--border); margin-bottom:20px; font-size:13px; color:var(--fg-muted); }
+.pstats b{ color:var(--fg); }
+
 /* ══ Commit message suggestions ══════════════════════════════ */
 .msgsuggest{ display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
 .msgchip{
@@ -939,6 +947,7 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
     <section class="view" id="v-issues"></section>
     <section class="view" id="v-issue"></section>
     <section class="view" id="v-settings"></section>
+    <section class="view" id="v-profile"></section>
 
 
   </main>
@@ -1050,7 +1059,9 @@ const S = {
   fullRepo: null,  // the complete repo object, for settings
   attachTo:null,   // the release a picked file is destined for
   poll:    null,   // its polling timer
-  wrap:    false   // word wrap in the editor
+  wrap:    false,  // word wrap in the editor
+  runFilter: '',   // Actions status filter
+  me:      null    // the signed-in user, for the profile screen
 };
 
 /* The editor is dirty when the buffer differs from the fetched blob. */
@@ -1237,8 +1248,22 @@ const api = {
                gh(`/search/code?q=${encodeURIComponent(q + ` repo:${o}/${r}`)}&per_page=40`),
 
   /* Actions. The runs list is how the app watches itself being built. */
-  runs:      (o, r)        => gh(`/repos/${o}/${r}/actions/runs?per_page=20`),
+  runs:      (o, r, status) => gh(`/repos/${o}/${r}/actions/runs?per_page=30`
+                                 + (status ? `&status=${status}` : '')),
   workflows: (o, r)        => gh(`/repos/${o}/${r}/actions/workflows`),
+  deleteRun: (o, r, id)    => gh(`/repos/${o}/${r}/actions/runs/${id}`, { method:'DELETE' }),
+
+  /* Build caches pile up and count against a repo's storage. List and clear. */
+  caches:    (o, r)        => gh(`/repos/${o}/${r}/actions/caches?per_page=100`),
+  deleteCache: (o, r, id)  => gh(`/repos/${o}/${r}/actions/caches/${id}`, { method:'DELETE' }),
+
+  /* The signed-in user's own profile. PATCH /user edits the fields GitHub shows
+     on the profile page. Needs no special scope beyond the token being the
+     user's own. */
+  me:        ()            => gh('/user'),
+  patchMe:   (body)        => gh('/user', { method:'PATCH', body }),
+  myStars:   ()            => gh('/user/starred?per_page=50'),
+  unstar:    (o, r)        => gh(`/user/starred/${o}/${r}`, { method:'DELETE' }),
 
   /* Fire a workflow_dispatch. Needs the token's Actions permission at read AND
      write — read-only is enough to watch runs, not to start one. Returns 204,
@@ -1386,6 +1411,14 @@ window.appBack = () => {
 
     case 'settings':
       loadTree(S.path);
+      return true;
+
+    case 'profile':
+      openRepos();
+      return true;
+
+    case 'commit':
+      openLog(null);
       return true;
 
     case 'search':
@@ -1594,7 +1627,8 @@ async function openRepos(){
   show('repos');
   setBar([
     { label:'Sign out', onClick:signOut },
-    { label:'New repository', onClick:newRepoSheet, solid:true, grow:true }
+    { label:'Profile',  onClick:openProfile },
+    { label:'New repo', onClick:newRepoSheet, solid:true, grow:true }
   ]);
 
   const list = $('repolist');
@@ -1631,6 +1665,141 @@ async function openRepos(){
   }
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PROFILE
+
+   The fields PATCH /user actually lets you change — name, bio, company,
+   location, blog, and the two visible booleans. The parts of a GitHub profile
+   that have NO write API (the contribution graph, followers, achievements,
+   pinned repos, the avatar) are read-only everywhere, so they are shown as
+   read-only here rather than pretended at.
+   ═══════════════════════════════════════════════════════════════════════ */
+async function openProfile(){
+  show('profile');
+  const v = $('v-profile');
+  v.innerHTML = '<div class="empty">Loading…</div>';
+  setBar([{ label:'Back', onClick:openRepos, solid:true }]);
+
+  try {
+    const me = await api.me();
+    S.me = me;
+
+    v.innerHTML = `
+      <div class="profhead">
+        <img class="pavatar" src="${esc(me.avatar_url)}&s=120" alt="">
+        <div>
+          <div class="pname">${esc(me.name || me.login)}</div>
+          <div class="plogin">@${esc(me.login)}</div>
+        </div>
+      </div>
+
+      <div class="pstats">
+        <span><b>${me.public_repos}</b> repos</span>
+        <span><b>${me.followers}</b> followers</span>
+        <span><b>${me.following}</b> following</span>
+      </div>
+
+      <div class="setgroup">
+        <h2>Edit profile</h2>
+        <div class="field"><label for="p-name">Name</label>
+          <input type="text" id="p-name" value="${esc(me.name || '')}"></div>
+        <div class="field"><label for="p-bio">Bio</label>
+          <textarea id="p-bio" rows="3">${esc(me.bio || '')}</textarea></div>
+        <div class="field"><label for="p-co">Company</label>
+          <input type="text" id="p-co" value="${esc(me.company || '')}"></div>
+        <div class="field"><label for="p-loc">Location</label>
+          <input type="text" id="p-loc" value="${esc(me.location || '')}"></div>
+        <div class="field"><label for="p-blog">Website</label>
+          <input type="text" id="p-blog" value="${esc(me.blog || '')}" placeholder="https://"></div>
+        <button class="btn solid wide" id="p-save">Save profile</button>
+      </div>
+
+      <div class="setgroup">
+        <h2>Profile README</h2>
+        <p class="hint" style="margin-bottom:12px">The card at the top of your profile is the README in your <b>${esc(me.login)}/${esc(me.login)}</b> repository.</p>
+        <button class="btn wide" id="p-readme">Edit profile README</button>
+      </div>
+
+      <div class="setgroup">
+        <h2>Starred</h2>
+        <button class="btn wide" id="p-stars">Manage starred repositories</button>
+      </div>
+
+      <p class="hint" style="margin-top:8px">
+        The contribution graph, followers, achievements and pinned repositories
+        have no edit API — GitHub does not let any app change them. They are not
+        shown here because they cannot be changed here.
+      </p>`;
+
+    $('p-save').onclick = async () => {
+      const btn = $('p-save');
+      busy(btn, true, 'Saving…');
+      try {
+        await api.patchMe({
+          name:     $('p-name').value.trim(),
+          bio:      $('p-bio').value.trim(),
+          company:  $('p-co').value.trim(),
+          location: $('p-loc').value.trim(),
+          blog:     $('p-blog').value.trim()
+        });
+        toast('Profile saved');
+      } catch (e) {
+        toast(e.status === 403 ? 'This token cannot edit the profile. A fine-grained token needs the "Profile" user permission set to read and write.' : e.message, 7000);
+      } finally { busy(btn, false); }
+    };
+
+    $('p-readme').onclick = () => {
+      // The profile README is just a file in the user/user repo. Open that repo
+      // and drop straight into its README.
+      openRepo({ owner: me.login, name: me.login, default_branch: 'main', private: false })
+        .then(() => openFile('README.md').catch(() => toast('No README.md yet — create one in this repo.')));
+    };
+
+    $('p-stars').onclick = starsSheet;
+
+  } catch (e) {
+    v.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+
+async function starsSheet(){
+  sheet('Starred repositories', '<div class="empty">Loading…</div>');
+  try {
+    const stars = await api.myStars();
+    if (!stars.length) { $('sheetbody').innerHTML = '<div class="empty">No starred repositories.</div>'; return; }
+
+    $('sheetbody').innerHTML = `
+      <div class="filebox">
+        ${stars.map((r, i) => `
+          <div class="row">
+            <button class="rowmain" data-open="${i}">
+              <span class="glyph">★</span>
+              <span class="name">${esc(r.full_name)}</span>
+            </button>
+            <button class="rowmenu" data-unstar="${i}" aria-label="Unstar">✕</button>
+          </div>`).join('')}
+      </div>
+      <button class="btn wide" onclick="closeSheet()">Close</button>`;
+
+    $('sheetbody').querySelectorAll('[data-open]').forEach(b => {
+      b.onclick = () => {
+        const r = stars[Number(b.dataset.open)];
+        closeSheet();
+        openRepo({ owner: r.owner.login, name: r.name, default_branch: r.default_branch, private: r.private });
+      };
+    });
+    $('sheetbody').querySelectorAll('[data-unstar]').forEach(b => {
+      b.onclick = async () => {
+        const r = stars[Number(b.dataset.unstar)];
+        try { await api.unstar(r.owner.login, r.name); toast('Unstarred ' + r.name); starsSheet(); }
+        catch (e) { toast(e.message, 6000); }
+      };
+    });
+  } catch (e) {
+    $('sheetbody').innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
 
 /* --- 6c. File tree ------------------------------------------ */
 async function openRepo(repo){
@@ -2509,37 +2678,146 @@ async function runSearch(){
 }
 
 /* ── Actions ─────────────────────────────────────────────────────────── */
-async function openActions(){
+async function openActions(status){
   show('actions');
+  S.runFilter = status || '';
   const v = $('v-actions');
   v.innerHTML = '<div class="empty">Loading…</div>';
   setBar([
     { label:'Back',    onClick:() => loadTree(S.path) },
-    { label:'Refresh', onClick:openActions },
+    { label:'Caches',  onClick:cachesSheet },
     { label:'Run',     onClick:runSheet, solid:true, grow:true }
   ]);
 
   try {
-    const { workflow_runs: runs } = await api.runs(S.repo.owner, S.repo.name);
-    if (!runs.length) { v.innerHTML = '<div class="empty">No runs yet.</div>'; return; }
+    const { workflow_runs: runs } = await api.runs(S.repo.owner, S.repo.name, S.runFilter);
 
-    v.innerHTML = '<h1>Actions</h1>';
-    runs.forEach(r => {
-      // A run in flight has no conclusion yet — that is a third state, not a failure.
-      const cls = r.status !== 'completed' ? 'run-wait'
-                : r.conclusion === 'success' ? 'run-ok' : 'run-bad';
+    // Status filter tabs, GitHub-style.
+    const tabs = [['','All'], ['completed','Completed'], ['in_progress','Running'], ['queued','Queued']];
+    let html = `<div class="statetabs">${tabs.map(([k, label]) =>
+      `<button class="${S.runFilter === k ? 'on' : ''}" data-f="${k}">${label}</button>`).join('')}</div>`;
 
-      const b = document.createElement('button');
-      b.className = 'row';
-      b.innerHTML = `
-        <span class="glyph ${cls}"></span>
-        <span class="name">${esc(r.name)} <span style="color:var(--dim)">#${r.run_number}</span></span>
-        <span class="meta">${ago(r.created_at)}</span>`;
-      b.onclick = () => openRun(r.id);
-      v.appendChild(b);
-    });
+    if (!runs.length) {
+      v.innerHTML = html + '<div class="empty">No runs.</div>';
+    } else {
+      html += '<div class="filebox">';
+      runs.forEach(r => {
+        const cls = r.status !== 'completed' ? 'run-wait'
+                  : r.conclusion === 'success' ? 'run-ok' : 'run-bad';
+        const dur = r.run_started_at && r.updated_at
+          ? runDuration(r.run_started_at, r.updated_at) : '';
+        html += `
+          <div class="row">
+            <button class="rowmain" data-run="${r.id}">
+              <span class="glyph ${cls}"></span>
+              <span class="body" style="flex:1;min-width:0">
+                <span class="name">${esc(r.name)} <span style="color:var(--fg-subtle)">#${r.run_number}</span></span>
+                <span class="sub" style="display:block;color:var(--fg-muted);font-size:11px">
+                  ${esc(r.head_branch)} · ${esc(r.actor ? r.actor.login : '')} · ${ago(r.created_at)}${dur ? ' · ' + dur : ''}
+                </span>
+              </span>
+            </button>
+            <button class="rowmenu" data-del="${r.id}" data-n="${r.run_number}" aria-label="Delete run">⋯</button>
+          </div>`;
+      });
+      html += '</div>';
+      v.innerHTML = html;
+    }
+
+    // wire the tabs
+    v.querySelectorAll('.statetabs button').forEach(b =>
+      b.onclick = () => openActions(b.dataset.f));
+    // wire the rows and delete buttons
+    v.querySelectorAll('[data-run]').forEach(b =>
+      b.onclick = () => openRun(Number(b.dataset.run)));
+    v.querySelectorAll('[data-del]').forEach(b =>
+      b.onclick = () => deleteRunConfirm(Number(b.dataset.del), b.dataset.n));
+
   } catch (e) {
     v.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+
+function runDuration(a, b){
+  const sec = Math.round((new Date(b) - new Date(a)) / 1000);
+  if (sec < 0) return '';
+  return sec < 60 ? sec + 's' : Math.floor(sec / 60) + 'm ' + (sec % 60) + 's';
+}
+
+function deleteRunConfirm(id, n){
+  sheet('Delete run', `
+    <div class="overwrite">Delete <b>run #${n}</b> and its logs? This cannot be undone.</div>
+    <button class="btn danger wide" id="dr-go">Delete run #${n}</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => {
+    $('dr-go').onclick = async () => {
+      try {
+        await api.deleteRun(S.repo.owner, S.repo.name, id);
+        closeSheet();
+        toast('Deleted run #' + n);
+        openActions(S.runFilter);
+      } catch (e) {
+        toast(e.status === 403 ? 'The token cannot delete runs. Actions must be read and write.' : e.message, 6000);
+      }
+    };
+  });
+}
+
+/* ── Build caches ─────────────────────────────────────────────────────────
+   Caches accumulate from every build and count against the repo's storage.
+   This lists them with sizes and lets you clear them, individually or all.
+   ──────────────────────────────────────────────────────────────────────── */
+async function cachesSheet(){
+  sheet('Build caches', '<div class="empty">Loading…</div>');
+  try {
+    const data = await api.caches(S.repo.owner, S.repo.name);
+    const list = data.actions_caches || [];
+
+    if (!list.length) {
+      $('sheetbody').innerHTML = '<div class="empty">No caches. Nothing to clear.</div>';
+      return;
+    }
+
+    const total = list.reduce((n, c) => n + (c.size_in_bytes || 0), 0);
+
+    $('sheetbody').innerHTML = `
+      <div class="overwrite">${list.length} cache${list.length === 1 ? '' : 's'} · ${bytes(total)} total</div>
+      <div class="filebox">
+        ${list.map((c, i) => `
+          <div class="row">
+            <span class="rowmain" style="flex:1">
+              <span class="body" style="flex:1;min-width:0">
+                <span class="name" style="font-size:13px">${esc(c.key.slice(0, 40))}</span>
+                <span class="sub" style="display:block;color:var(--fg-muted);font-size:11px">${esc(c.ref.replace('refs/heads/', ''))} · ${bytes(c.size_in_bytes)}</span>
+              </span>
+            </span>
+            <button class="rowmenu" data-cache="${c.id}" aria-label="Delete cache">🗑</button>
+          </div>`).join('')}
+      </div>
+      <button class="btn danger wide" id="ca-all">Clear all caches</button>
+      <div style="height:10px"></div>
+      <button class="btn wide" onclick="closeSheet()">Close</button>`;
+
+    $('sheetbody').querySelectorAll('[data-cache]').forEach(b => {
+      b.onclick = async () => {
+        try {
+          await api.deleteCache(S.repo.owner, S.repo.name, Number(b.dataset.cache));
+          toast('Cache cleared');
+          cachesSheet();
+        } catch (e) { toast(e.message, 6000); }
+      };
+    });
+    $('ca-all').onclick = async () => {
+      if (!confirm('Clear all ' + list.length + ' caches?')) return;
+      try {
+        for (const c of list) await api.deleteCache(S.repo.owner, S.repo.name, c.id);
+        toast('All caches cleared');
+        cachesSheet();
+      } catch (e) { toast(e.message, 6000); }
+    };
+  } catch (e) {
+    $('sheetbody').innerHTML = `<div class="empty">${esc(e.message)}</div>`;
   }
 }
 
