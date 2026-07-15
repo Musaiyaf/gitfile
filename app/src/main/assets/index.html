@@ -972,6 +972,7 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
     <section class="view" id="v-settings"></section>
     <section class="view" id="v-profile"></section>
     <section class="view" id="v-allsearch"></section>
+    <section class="view" id="v-home"></section>
 
 
   </main>
@@ -1291,6 +1292,15 @@ const api = {
      on the profile page. Needs no special scope beyond the token being the
      user's own. */
   me:        ()            => gh('/user'),
+
+  /* Dashboard sources. Kept per-repo so a slow or private-blocked repo can fail
+     alone without sinking the whole board. */
+  repoRuns:  (o, r)        => gh(`/repos/${o}/${r}/actions/runs?per_page=1`),
+  repoPulls: (o, r)        => gh(`/repos/${o}/${r}/pulls?state=open&per_page=5`),
+
+  /* Actions minutes for the month. GitHub exposes this per-user; on the free
+     plan the included quota for private repos is 2,000 minutes. */
+  billingActions: (user)   => gh(`/users/${user}/settings/billing/actions`),
   patchMe:   (body)        => gh('/user', { method:'PATCH', body }),
   myStars:   ()            => gh('/user/starred?per_page=50'),
   unstar:    (o, r)        => gh(`/user/starred/${o}/${r}`, { method:'DELETE' }),
@@ -1445,8 +1455,15 @@ window.appBack = () => {
 
     case 'profile':
     case 'allsearch':
-      openRepos();
+      openHome();
       return true;
+
+    case 'repos':
+      openHome();
+      return true;
+
+    case 'home':
+      return false;   // top level — let Android close the app
 
     case 'commit':
       openLog(null);
@@ -1470,7 +1487,6 @@ window.appBack = () => {
       openRepos();
       return true;
 
-    case 'repos':
     case 'auth':
     default:
       return false;      // nothing left — let Android close the app
@@ -1617,7 +1633,7 @@ $('signin').onclick = async () => {
     $('tok').value = '';
     paintTokCount();
     paintRef();
-    await openRepos();
+    await openHome();
   } catch (e) {
     S.token = null;
     toast(e.message, 6000);
@@ -1657,7 +1673,7 @@ async function openRepos(){
   paintRef();
   show('repos');
   setBar([
-    { label:'Sign out', onClick:signOut },
+    { label:'Home',     onClick:openHome },
     { label:'Search',   onClick:openAllSearch },
     { label:'Profile',  onClick:openProfile },
     { label:'New repo', onClick:newRepoSheet, solid:true, grow:true }
@@ -1707,6 +1723,136 @@ async function openRepos(){
   }
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════════
+   HOME DASHBOARD
+
+   One screen answering "what needs my attention" across every repo: the build
+   minutes meter, then per-repo cards showing the latest build, open PRs, and
+   the last commit. GitHub scatters all of this; here it is in one glance.
+
+   Each repo is fetched independently and rendered as it arrives, so one slow or
+   permission-blocked repo never blocks the board.
+   ═══════════════════════════════════════════════════════════════════════ */
+async function openHome(){
+  show('home');
+  const v = $('v-home');
+  v.innerHTML = `
+    <div id="home-minutes"></div>
+    <div class="dashhead"><h1 style="padding-left:0;margin:0">Overview</h1>
+      <button class="btn small" id="home-refresh">Refresh</button></div>
+    <div id="home-cards"><div class="empty">Loading your repositories…</div></div>`;
+
+  setBar([
+    { label:'Repos',  onClick:openRepos },
+    { label:'Search', onClick:openAllSearch },
+    { label:'Profile',onClick:openProfile, solid:true, grow:true }
+  ]);
+
+  $('home-refresh').onclick = openHome;
+
+  paintMinutes();     // fire and forget — fills in when it returns
+  paintDashboard();
+}
+
+/* The build-minutes meter. Free plan includes 2,000 private-repo minutes/month;
+   public repos do not count. Shows used / included with a colour as it fills. */
+async function paintMinutes(){
+  const el = $('home-minutes');
+  try {
+    const user = (S.me && S.me.login) || (await api.me()).login;
+    const b = await api.billingActions(user);
+
+    const used = Math.round(b.total_minutes_used || 0);
+    const included = b.included_minutes || 2000;
+    const paid = Math.round(b.total_paid_minutes_used || 0);
+    const frac = Math.min(1, used / included);
+    const cls = frac >= 1 ? 'over' : frac >= 0.8 ? 'near' : '';
+
+    el.innerHTML = `
+      <div class="meter ${cls}">
+        <div class="mlabel">
+          <span>Actions minutes this month</span>
+          <span class="mnum">${used.toLocaleString()} / ${included.toLocaleString()}</span>
+        </div>
+        <div class="bar"><i style="width:${Math.round(frac * 100)}%"></i></div>
+        <div class="mnote">${
+          paid > 0 ? paid.toLocaleString() + ' paid minutes used · ' : ''
+        }private repos only — public builds are free</div>
+      </div>`;
+  } catch (e) {
+    // Billing needs the "Plan" user permission; if it is not granted, say so
+    // quietly rather than breaking the board.
+    el.innerHTML = `<div class="meter"><div class="mnote">Build-minutes usage needs the token's <b>Plan</b> permission (read). ${
+      e.status === 403 ? '' : esc(e.message)
+    }</div></div>`;
+  }
+}
+
+async function paintDashboard(){
+  const box = $('home-cards');
+  let repos;
+  try {
+    repos = await api.repos();
+  } catch (e) {
+    box.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    return;
+  }
+
+  // Show the most recently updated handful — a phone dashboard of 40 repos is
+  // noise. The full list is one tap away under Repos.
+  repos = repos.slice(0, 12);
+  if (!repos.length) { box.innerHTML = '<div class="empty">No repositories yet.</div>'; return; }
+
+  box.innerHTML = repos.map((r, i) => `
+    <button class="dashcard" id="dash-${i}">
+      <div class="dtop">
+        <span class="dname">${esc(r.name)}</span>
+        ${r.private ? '<span class="pill">Private</span>' : ''}
+      </div>
+      <div class="dmeta" id="dmeta-${i}">
+        <span class="dim">updated ${ago(r.pushed_at || r.updated_at)}</span>
+      </div>
+    </button>`).join('');
+
+  repos.forEach((r, i) => {
+    $('dash-' + i).onclick = () => openRepo({
+      owner: r.owner.login, name: r.name,
+      default_branch: r.default_branch, private: r.private
+    });
+    // Enrich each card independently — build status and open PRs.
+    enrichCard(r, i);
+  });
+}
+
+async function enrichCard(r, i){
+  const el = $('dmeta-' + i);
+  if (!el) return;
+  const o = r.owner.login;
+  const bits = [];
+
+  // Latest run
+  try {
+    const runs = await api.repoRuns(o, r.name);
+    const run = runs.workflow_runs && runs.workflow_runs[0];
+    if (run) {
+      const cls = run.status !== 'completed' ? 'run-wait'
+                : run.conclusion === 'success' ? 'run-ok' : 'run-bad';
+      const word = run.status !== 'completed' ? 'building'
+                 : run.conclusion === 'success' ? 'passing' : 'failed';
+      bits.push(`<span class="dstat"><span class="glyph ${cls}"></span> ${word}</span>`);
+    }
+  } catch { /* no actions or no access — skip silently */ }
+
+  // Open PRs
+  try {
+    const pulls = await api.repoPulls(o, r.name);
+    if (pulls.length) bits.push(`<span class="dstat">⇄ ${pulls.length} PR${pulls.length === 1 ? '' : 's'}</span>`);
+  } catch { /* skip */ }
+
+  bits.push(`<span class="dim">updated ${ago(r.pushed_at || r.updated_at)}</span>`);
+  el.innerHTML = bits.join('');
+}
 
 /* ── Cross-repo search ────────────────────────────────────────────────────
    GitHub makes you search one repo at a time. This searches everything you own
@@ -1960,7 +2106,7 @@ async function loadBranches(){
 }
 
 /* Switching branch re-reads the current directory on the new ref. */
-$('branchsel').onchange = async e => {
+$('branchsel').onchange = async (e) => {
   S.branch = e.target.value;
   await loadTree(S.path);
 };
@@ -4124,13 +4270,13 @@ function wireSettings(R){
     catch (e) { toast(e.message, 6000); }
   };
 
-  $('set-branch').onchange = async e => {
+  $('set-branch').onchange = async (e) => {
     try { await api.setDefaultBranch(o, r, e.target.value); S.repo.default_branch = e.target.value; toast('Default branch is now ' + e.target.value); }
     catch (err) { toast(err.message, 6000); }
   };
 
   const feature = (id, key) => {
-    $(id).onchange = async e => {
+    $(id).onchange = async (e) => {
       try { await api.patchRepo(o, r, { [key]: e.target.checked }); toast('Saved'); }
       catch (err) { e.target.checked = !e.target.checked; toast(err.message, 6000); }
     };
@@ -5516,25 +5662,51 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function boot(){
   paintBackend();
-  applyDesktop((await store.get(DESKTOP_KEY)) === '1');
+  try { applyDesktop((await store.get(DESKTOP_KEY)) === '1'); } catch {}
   paintRef();
-  paintQueueBadge();
-  if (navigator.onLine) flushQueue(true);   // catch anything queued last session
-  const saved = await store.get(TOKEN_KEY);
-  if (!saved) { setBar(null); return; }
 
+  // Restore the token FIRST — before anything that could throw. Nothing at boot
+  // is allowed to log the user out except GitHub actually rejecting the token.
+  let saved = null;
+  try { saved = await store.get(TOKEN_KEY); } catch {}
+  if (!saved) { setBar(null); return; }
   S.token = saved;
+
+  // The offline queue flush must never crash boot; wrap it and ignore failures.
+  paintQueueBadge();
+  if (navigator.onLine) { try { flushQueue(true); } catch {} }
+
   try {
     S.user = await api.me();
     paintRef();
-    await openRepos();
-  } catch {
-    S.token = null;
-    await store.del(TOKEN_KEY);
-    $('tok').value = '';        // whatever autofill may have put there
-    paintTokCount();
-    show('auth');
-    toast('The saved token is no longer valid. Sign in again.', 6000);
+    await openHome();
+  } catch (e) {
+    // ONLY forget the token when GitHub actually rejects it (401/403). A network
+    // blip, a timeout, or a 5xx must NOT log you out — that would sign you out
+    // every time you open the app offline or on a bad connection, which is the
+    // opposite of "keep me signed in".
+    if (e && (e.status === 401 || e.status === 403)) {
+      S.token = null;
+      await store.del(TOKEN_KEY);
+      if ($('tok')) $('tok').value = '';
+      paintTokCount();
+      show('auth');
+      toast('The saved token was rejected by GitHub. Sign in again.', 6000);
+    } else {
+      // Keep the token; we are just offline or GitHub hiccuped. Show the app and
+      // let the user retry — openRepos will work once the network is back.
+      paintRef();
+      show('repos');
+      $('v-repos').innerHTML = `
+        <div class="empty">
+          Could not reach GitHub just now.<br>
+          You are still signed in.
+          <div style="height:14px"></div>
+          <button class="btn solid" id="boot-retry">Retry</button>
+        </div>`;
+      const rb = document.getElementById('boot-retry');
+      if (rb) rb.onclick = () => openRepos().catch(() => toast('Still cannot reach GitHub.', 5000));
+    }
   }
 }
 boot();
