@@ -96,6 +96,13 @@ a:hover{ text-decoration:underline; }
 #dirty.on{ display:inline; }
 #quota{ color:var(--fg-subtle); font-size:11px; white-space:nowrap; }
 
+#queuebadge{
+  flex:none; margin-left:8px;
+  background:rgba(210,153,34,.15); color:var(--amber);
+  border:1px solid var(--amber); border-radius:2em;
+  padding:1px 8px; font-size:11px; font-weight:600; cursor:pointer;
+  display:inline-flex; align-items:center;
+}
 #gear{
   background:none; border:0; padding:4px 0 4px 10px;
   color:var(--fg-muted); font-size:15px; line-height:1; cursor:pointer; flex:none;
@@ -822,6 +829,7 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
       <div class="coord" id="coord"><span class="dim">not signed in</span></div>
       <span id="dirty">●</span>
       <span id="quota"></span>
+      <button id="queuebadge" style="display:none" aria-label="Sync queued changes"></button>
       <button id="gear" aria-label="Settings">⚙</button>
     </div>
     <div class="tabs" id="tabs"></div>
@@ -948,6 +956,7 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
     <section class="view" id="v-issue"></section>
     <section class="view" id="v-settings"></section>
     <section class="view" id="v-profile"></section>
+    <section class="view" id="v-allsearch"></section>
 
 
   </main>
@@ -1247,6 +1256,12 @@ const api = {
   search:    (o, r, q)     =>
                gh(`/search/code?q=${encodeURIComponent(q + ` repo:${o}/${r}`)}&per_page=40`),
 
+  /* Cross-repo: the same code index, scoped to a user instead of one repo, so a
+     single query reaches everything they own. GitHub's index is lazy, so a repo
+     created minutes ago may not appear yet. */
+  searchAll: (user, q) =>
+               gh(`/search/code?q=${encodeURIComponent(q + ` user:${user}`)}&per_page=50`),
+
   /* Actions. The runs list is how the app watches itself being built. */
   runs:      (o, r, status) => gh(`/repos/${o}/${r}/actions/runs?per_page=30`
                                  + (status ? `&status=${status}` : '')),
@@ -1414,6 +1429,7 @@ window.appBack = () => {
       return true;
 
     case 'profile':
+    case 'allsearch':
       openRepos();
       return true;
 
@@ -1627,6 +1643,7 @@ async function openRepos(){
   show('repos');
   setBar([
     { label:'Sign out', onClick:signOut },
+    { label:'Search',   onClick:openAllSearch },
     { label:'Profile',  onClick:openProfile },
     { label:'New repo', onClick:newRepoSheet, solid:true, grow:true }
   ]);
@@ -1675,6 +1692,63 @@ async function openRepos(){
   }
 }
 
+
+/* ── Cross-repo search ────────────────────────────────────────────────────
+   GitHub makes you search one repo at a time. This searches everything you own
+   in a single query — the "where did I put that" problem, solved for a phone.
+   ──────────────────────────────────────────────────────────────────────── */
+async function openAllSearch(){
+  show('allsearch');
+  const v = $('v-allsearch');
+  v.innerHTML = `
+    <h1 style="padding-left:0">Search all repositories</h1>
+    <div class="field">
+      <input type="text" id="as-q" placeholder="Function name, string, anything…"
+             spellcheck="false" autocapitalize="off">
+    </div>
+    <div id="as-results"></div>`;
+  setBar([{ label:'Back', onClick:openRepos, solid:true }]);
+
+  const run = async () => {
+    const q = $('as-q').value.trim();
+    if (!q) return;
+    const box = $('as-results');
+    box.innerHTML = '<div class="empty">Searching every repo…</div>';
+    try {
+      const user = (S.me && S.me.login) || (await api.me()).login;
+      const res = await api.searchAll(user, q);
+
+      if (!res.items.length) { box.innerHTML = '<div class="empty">No matches. GitHub\'s index can lag for brand-new repos.</div>'; return; }
+
+      box.innerHTML = `<div class="filebox">${res.items.map((it, i) => `
+        <button class="rowmain" data-i="${i}" style="width:100%;border-top:1px solid var(--border)">
+          <span class="glyph ${fileClass(it.name)}">${fileGlyph({ type:'file', name:it.name })}</span>
+          <span class="body" style="flex:1;min-width:0">
+            <span class="name">${esc(it.name)}</span>
+            <span class="sub" style="display:block;color:var(--fg-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.repository.full_name)} · ${esc(it.path)}</span>
+          </span>
+        </button>`).join('')}</div>`;
+
+      box.querySelectorAll('[data-i]').forEach(b => {
+        b.onclick = () => {
+          const it = res.items[Number(b.dataset.i)];
+          // Jump into that repo and open the file.
+          openRepo({
+            owner: it.repository.owner.login,
+            name: it.repository.name,
+            default_branch: it.repository.default_branch || 'main',
+            private: it.repository.private
+          }).then(() => openFile(it.path).catch(() => toast('Opened the repo; could not open the file directly.')));
+        };
+      });
+    } catch (e) {
+      box.innerHTML = `<div class="empty">${esc(e.status === 403 ? 'Search is rate-limited (about 10/min). Wait a moment.' : e.message)}</div>`;
+    }
+  };
+
+  $('as-q').addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
+  setTimeout(() => $('as-q').focus(), 60);
+}
 
 /* Delete a repository, with GitHub's own safeguard: you must type the name.
    There is no undo, so the friction is deliberate. */
@@ -2324,6 +2398,11 @@ function commitSheet(){
       <input type="text" id="cmsg" placeholder="${moved ? 'Move ' + S.file.path.split('/').pop() : 'Update ' + S.file.path.split('/').pop()}">
       <div class="msgsuggest" id="msgsuggest"></div>
     </div>
+    <label class="check" id="crun-row" style="margin:4px 0 14px">
+      <input type="checkbox" id="crun">
+      <span class="box"></span>
+      Run the build after committing
+    </label>
     <button class="btn solid wide" id="cgo">Commit to ${S.branch}</button>
     <div style="height:10px"></div>
     <button class="btn wide" onclick="closeSheet()">Cancel</button>
@@ -2354,6 +2433,7 @@ function commitSheet(){
 
 async function doCommit(){
   const btn     = $('cgo');
+  const alsoRun = $('crun') && $('crun').checked;   // read before the sheet closes
   const newPath = $('pathin').value.trim();
   const moved   = isMoved();
   const name    = S.file.path.split('/').pop();
@@ -2378,6 +2458,7 @@ async function doCommit(){
       closeSheet();
       paintPath(); paintStats(); paintRef(); refreshCommitBtn();
       toast('Moved · ' + c.sha.slice(0, 7));
+      if (alsoRun) await runDefaultWorkflow();
 
     } else {
       const b64 = b64encode(S.buffer);
@@ -2395,6 +2476,7 @@ async function doCommit(){
         closeSheet();
         paintStats(); paintRef(); refreshCommitBtn();
         toast('Committed · ' + c.sha.slice(0, 7));
+        if (alsoRun) await runDefaultWorkflow();
         return;
       }
 
@@ -2411,12 +2493,103 @@ async function doCommit(){
       closeSheet();
       paintStats(); paintRef(); refreshCommitBtn();
       toast('Committed · ' + res.commit.sha.slice(0, 7));
+      if (alsoRun) await runDefaultWorkflow();
     }
   } catch (e) {
-    toast(e.message, 6000);
+    // Offline? Queue the write instead of losing it, and flush when back online.
+    if (isOffline(e)) {
+      await queueCommit({
+        owner: S.repo.owner, name: S.repo.name, branch: S.branch,
+        path: S.file.path, newPath: moved ? newPath : null,
+        b64: b64encode(S.buffer), message: msg
+      });
+      // Optimistically update local state so the editor reflects the pending save.
+      if (moved) S.file = { path: newPath, sha: S.file.sha, text: S.buffer, binary: false };
+      else S.file.text = S.buffer;
+      closeSheet();
+      paintPath?.(); paintStats(); paintRef(); refreshCommitBtn();
+      toast('No connection — saved offline. It will commit when you are back online.', 6000);
+    } else {
+      toast(e.message, 6000);
+    }
   } finally {
     busy(btn, false);
   }
+}
+
+/* ── Offline commit queue ─────────────────────────────────────────────────
+   A commit made with no signal is not lost — it is stored on-device and
+   replayed when the connection returns. The GitHub app just fails; this is the
+   write half of the tree cache.
+   ──────────────────────────────────────────────────────────────────────── */
+const QUEUE_KEY = 'gitfile:queue';
+
+function isOffline(e){
+  return !navigator.onLine ||
+    /failed to fetch|network|networkerror/i.test(e && e.message || '');
+}
+
+async function loadQueue(){
+  try { return JSON.parse((await store.get(QUEUE_KEY)) || '[]'); }
+  catch { return []; }
+}
+async function saveQueue(q){ await store.set(QUEUE_KEY, JSON.stringify(q)); }
+
+async function queueCommit(item){
+  const q = await loadQueue();
+  q.push({ ...item, at: Date.now() });
+  await saveQueue(q);
+  paintQueueBadge();
+}
+
+/* Replay everything queued, oldest first. Stops on the first failure so items
+   stay in order and nothing is dropped. */
+async function flushQueue(silent){
+  let q = await loadQueue();
+  if (!q.length) { if (!silent) toast('Nothing queued.'); return; }
+  if (!navigator.onLine) { if (!silent) toast('Still offline.'); return; }
+
+  let done = 0;
+  while (q.length) {
+    const item = q[0];
+    try {
+      const entries = item.newPath
+        ? [{ path: item.newPath, b64: item.b64 }, { path: item.path, delete: true }]
+        : [{ path: item.path, b64: item.b64 }];
+      // commitFiles targets the current repo/branch context, so set it for each.
+      await commitFilesTo(item.owner, item.name, item.branch, entries, item.message);
+      q.shift();
+      await saveQueue(q);
+      done++;
+    } catch (e) {
+      if (isOffline(e)) break;         // lost signal again — keep the rest queued
+      // A real error (e.g. the file now conflicts): drop this one so it can't
+      // block the queue forever, and tell the user.
+      q.shift(); await saveQueue(q);
+      toast('Skipped a queued change to ' + item.path + ': ' + e.message, 6000);
+    }
+  }
+  paintQueueBadge();
+  if (done && !silent) toast('Synced ' + done + ' queued change' + (done === 1 ? '' : 's') + '.');
+  if (done) { paintQueueBadge(); if (S.view === 'tree') loadTree(S.path); }
+}
+
+/* A repo-explicit commit, so the queue can target repos other than the one
+   currently open. Mirrors commitFiles but takes the coordinates directly. */
+async function commitFilesTo(owner, name, branch, entries, message){
+  const savedRepo = S.repo, savedBranch = S.branch;
+  S.repo = { owner, name }; S.branch = branch;
+  try { return await commitFiles(entries, message); }
+  finally { S.repo = savedRepo; S.branch = savedBranch; }
+}
+
+function paintQueueBadge(){
+  loadQueue().then(q => {
+    const el = $('queuebadge');
+    if (!el) return;
+    el.style.display = q.length ? 'inline-flex' : 'none';
+    el.textContent = q.length + ' queued';
+  });
 }
 
 /* ── A line diff ──────────────────────────────────────────────────────────
@@ -2860,6 +3033,32 @@ async function cachesSheet(){
     };
   } catch (e) {
     $('sheetbody').innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+
+/* Commit-and-run: fire the repo's workflow straight after a commit, then jump to
+   the live run. The whole loop — edit, commit, build, watch — in one tap. */
+async function runDefaultWorkflow(){
+  try {
+    const { workflows } = await api.workflows(S.repo.owner, S.repo.name);
+    const active = workflows.filter(w => w.state === 'active');
+    if (!active.length) { toast('Committed, but there is no workflow to run.'); return; }
+
+    // Prefer one that looks like a build; otherwise the only one; otherwise ask.
+    const build = active.find(w => /build|apk|release|ci/i.test(w.name + w.path));
+    const w = build || (active.length === 1 ? active[0] : null);
+
+    if (!w) { runSheet(); return; }   // several, none obviously "the build" — let them pick
+
+    const before = Date.now();
+    await api.dispatch(S.repo.owner, S.repo.name, w.id, S.branch);
+    toast('Building ' + w.name + '…');
+    const id = await findNewRun(w.id, before);
+    if (id) openRun(id); else openActions();
+  } catch (e) {
+    toast(e.status === 403
+      ? 'Committed. To run builds, the token needs Actions: read and write.'
+      : 'Committed, but could not start the build: ' + e.message, 6000);
   }
 }
 
@@ -4715,6 +4914,7 @@ async function doPR(){
   }
 }
 
+
 /* --- Warn before losing an uncommitted buffer --------------- */
 window.addEventListener('beforeunload', e => {
   if (isDirty()) { e.preventDefault(); e.returnValue = ''; }
@@ -4994,43 +5194,6 @@ $('gear').onclick = async () => {
 };
 
 /* ── About ───────────────────────────────────────────────────────────────── */
-function aboutSheet(){
-  const version = (window.Native && window.Native.appVersion)
-    ? window.Native.appVersion()
-    : 'web';
-
-  sheet('About', `
-    <div class="about">
-      <div class="mark">▤</div>
-      <div class="name">gitfile</div>
-      <div class="ver">${esc(version)}</div>
-    </div>
-
-    <p class="hint" style="margin-bottom:16px">
-      A GitHub repository file manager for Android. Browse a repo, edit a file,
-      commit it, cut a branch, open a pull request, run the build and install
-      what it produces — all from a phone.
-    </p>
-
-    <div class="overwrite">
-      Built by <b>Musaiyaf</b><br>
-      An HTML app in a WebView shell, built by GitHub Actions.<br>
-      It builds and ships itself.
-    </div>
-
-    <div class="sheetlist">
-      <button id="ab-repo">Source code<small>github.com/Musaiyaf/gitfile</small></button>
-      <button id="ab-token">Token permissions<small>What gitfile needs, and why</small></button>
-    </div>
-
-    <button class="btn wide" onclick="closeSheet()">Close</button>
-  `, () => {
-    const open = url => window.Native ? window.Native.openUrl(url) : window.open(url, '_blank');
-    $('ab-repo').onclick  = () => open('https://github.com/Musaiyaf/gitfile');
-    $('ab-token').onclick = () => { closeSheet(); permsSheet(); };
-  });
-}
-
 /* Spelling out what each permission actually buys, because "it says 403" is not
    a thing anyone should have to debug twice. */
 function permsSheet(){
@@ -5104,13 +5267,11 @@ function aboutSheet(){
     </p>
 
     <div class="sheetlist">
-      <button id="ab-repo">Source code<small>github.com/Musaiyaf/gitfile</small></button>
       <button id="ab-token">Manage your token<small>Revoke it, or change its permissions</small></button>
     </div>
     <button class="btn wide" onclick="closeSheet()">Close</button>
   `, () => {
     const open = url => () => window.Native ? window.Native.openUrl(url) : window.open(url, '_blank');
-    $('ab-repo').onclick  = open(REPO_URL);
     $('ab-token').onclick = open('https://github.com/settings/tokens?type=beta');
   });
 }
@@ -5144,10 +5305,20 @@ $('assetpick').addEventListener('change', e => {
   e.target.value = '';        // so picking the same file twice still fires
 });
 
+// Offline queue: flush automatically the moment the connection returns, and let
+// the header badge trigger a manual sync.
+window.addEventListener('online', () => flushQueue(true));
+document.addEventListener('DOMContentLoaded', () => {
+  const b = document.getElementById('queuebadge');
+  if (b) b.onclick = () => flushQueue(false);
+});
+
 (async function boot(){
   paintBackend();
   applyDesktop((await store.get(DESKTOP_KEY)) === '1');
   paintRef();
+  paintQueueBadge();
+  if (navigator.onLine) flushQueue(true);   // catch anything queued last session
   const saved = await store.get(TOKEN_KEY);
   if (!saved) { setBar(null); return; }
 
