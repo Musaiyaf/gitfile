@@ -424,6 +424,21 @@ input.masked.plain{ -webkit-text-security:none; letter-spacing:0; }
 .md tr:nth-child(2n){ background:var(--inset); }
 
 /* ══ Image preview ═══════════════════════════════════════════ */
+.csvwrap{ overflow-x:auto; border:1px solid var(--border); border-radius:var(--r); }
+table.csv{ border-collapse:collapse; font-size:12px; font-family:var(--mono); width:100%; }
+table.csv th, table.csv td{
+  border:1px solid var(--border); padding:6px 10px; text-align:left; white-space:nowrap;
+}
+table.csv th{ background:var(--inset); color:var(--fg); font-weight:600; position:sticky; top:0; }
+table.csv tr:nth-child(2n) td{ background:var(--inset); }
+.csvmeta{ font-size:12px; color:var(--fg-muted); margin-top:8px; font-family:var(--mono); }
+.svgview{
+  border:1px solid var(--border); border-radius:var(--r);
+  padding:24px; text-align:center;
+  background:repeating-conic-gradient(var(--subtle) 0% 25%, var(--inset) 0% 50%) 50% / 16px 16px;
+}
+.svgview svg{ max-width:100%; height:auto; }
+
 #imgview{
   padding:32px 16px; text-align:center;
   border:1px solid var(--border); border-radius:0 0 var(--r) var(--r);
@@ -1990,10 +2005,10 @@ async function loadTree(path){
   paintCrumbs();
 
   setBar([
-    { label:'Repos',  onClick:openRepos },
-    { label:'Recent', onClick:recentSheet },
-    { label:'Repo',   onClick:repoSheet },
-    { label:'+ New',  onClick:newSheet, solid:true, grow:true }
+    { label:'Repos',    onClick:openRepos },
+    { label:'Go to file', onClick:gotoFileSheet },
+    { label:'Repo',     onClick:repoSheet },
+    { label:'+ New',    onClick:newSheet, solid:true, grow:true }
   ]);
 
   const list = $('treelist');
@@ -2305,16 +2320,22 @@ const isMoved = () =>
 
 /* ── The File sheet: preview, history, delete ───────────────────────────── */
 function fileSheet(){
-  const md = /\.(md|markdown)$/i.test(S.file.path);
+  const path = S.file.path;
+  const kind = /\.(md|markdown)$/i.test(path) ? 'markdown'
+             : /\.(csv|tsv)$/i.test(path)      ? 'table'
+             : /\.svg$/i.test(path)            ? 'svg'
+             : null;
   const showingPreview = $('preview').style.display === 'block';
+
+  const label = { markdown:'Preview markdown', table:'Preview as table', svg:'Preview image' }[kind];
 
   sheet('File', `
     <div class="overwrite">
-      <b>${S.file.path}</b><br>
+      <b>${path}</b><br>
       blob ${S.file.sha.slice(0, 7)} on <b>${S.branch}</b>
     </div>
     <div class="sheetlist">
-      ${md ? `<button id="f-prev">${showingPreview ? 'Show source' : 'Preview markdown'}<small>Render it the way GitHub would</small></button>` : ''}
+      ${kind ? `<button id="f-prev">${showingPreview ? 'Show source' : label}<small>Render it the way GitHub would</small></button>` : ''}
       <button id="f-log">History<small>Every commit that touched this file</small></button>
       <button id="f-del">Delete<small>Removes the file in a single commit</small></button>
     </div>
@@ -2322,12 +2343,69 @@ function fileSheet(){
   `, () => {
     if ($('f-prev')) $('f-prev').onclick = () => {
       closeSheet();
-      if (showingPreview) { filePane('edit'); }
-      else { $('preview').innerHTML = markdown(S.buffer); filePane('preview'); }
+      if (showingPreview) { filePane('edit'); return; }
+      // Render into the shared preview pane by type.
+      if (kind === 'markdown')   $('preview').innerHTML = markdown(S.buffer);
+      else if (kind === 'table') $('preview').innerHTML = renderTable(S.buffer, path);
+      else if (kind === 'svg')   $('preview').innerHTML = renderSvg(S.buffer);
+      filePane('preview');
     };
     $('f-log').onclick = () => { closeSheet(); openLog(S.file.path); };
     $('f-del').onclick = () => { closeSheet(); doDelete({ path:S.file.path, name:S.file.path.split('/').pop() }); };
   });
+}
+
+/* CSV/TSV → a table. A real CSV parser, not split(','): fields can contain
+   commas inside quotes, quotes escaped by doubling, and newlines inside quotes.
+   GitHub renders these as a grid; so do we. */
+function renderTable(text, path){
+  const sep = /\.tsv$/i.test(path) ? '\t' : ',';
+  const rows = parseCsv(text, sep);
+  if (!rows.length) return '<div class="empty">Empty file.</div>';
+
+  const head = rows[0];
+  const body = rows.slice(1);
+
+  return `<div class="csvwrap"><table class="csv">
+    <thead><tr>${head.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+    <tbody>${body.map(r =>
+      `<tr>${head.map((_, i) => `<td>${esc(r[i] != null ? r[i] : '')}</td>`).join('')}</tr>`
+    ).join('')}</tbody>
+  </table></div>
+  <div class="csvmeta">${body.length} row${body.length === 1 ? '' : 's'} · ${head.length} column${head.length === 1 ? '' : 's'}</div>`;
+}
+
+function parseCsv(text, sep){
+  const rows = [];
+  let row = [], field = '', inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }   // escaped quote
+        else inQ = false;
+      } else field += c;
+    } else {
+      if (c === '"') inQ = true;
+      else if (c === sep) { row.push(field); field = ''; }
+      else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+      else if (c === '\r') { /* ignore, handled by the \n */ }
+      else field += c;
+    }
+  }
+  // last field/row if the file did not end in a newline
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows.filter(r => r.length > 1 || (r[0] && r[0].length));   // drop blank lines
+}
+
+/* SVG → the rendered image. The file IS the image; drop it into the DOM inside a
+   sandbank container. It is the user\'s own repo content, shown to themselves. */
+function renderSvg(text){
+  // A little defensive: strip <script> so a hand-written SVG with script cannot
+  // run in the app context. Preview is about seeing the picture, not executing it.
+  const clean = text.replace(/<script[\s\S]*?<\/script>/gi, '');
+  return `<div class="svgview">${clean}</div>
+    <div class="csvmeta">Rendered preview · edit the source to change it</div>`;
 }
 
 function backToTree(){
@@ -2507,7 +2585,8 @@ async function doCommit(){
       if (moved) S.file = { path: newPath, sha: S.file.sha, text: S.buffer, binary: false };
       else S.file.text = S.buffer;
       closeSheet();
-      paintPath?.(); paintStats(); paintRef(); refreshCommitBtn();
+      if (typeof paintPath === 'function') paintPath();
+      paintStats(); paintRef(); refreshCommitBtn();
       toast('No connection — saved offline. It will commit when you are back online.', 6000);
     } else {
       toast(e.message, 6000);
@@ -2644,6 +2723,126 @@ const esc = t => String(t).replace(/[&<>"]/g, c =>
 
 
 /* --- 7a2. The New sheet — everything you can add ------------- */
+/* ── Go to file ───────────────────────────────────────────────────────────
+   GitHub's "Go to file", VS Code's Ctrl+P: type a few letters of any file's
+   path anywhere in the repo and jump straight to it. The whole branch tree
+   comes back in one API call; filtering is a subsequence match so "mainjava"
+   finds "app/.../MainActivity.java".
+   ──────────────────────────────────────────────────────────────────────── */
+let GOTO_FILES = null;   // cached tree per repo+branch, for the session
+
+async /* The clone URLs behind GitHub's green "Code" button. Reference info you copy
+   into a terminal on a real machine — the phone cannot clone, but you often want
+   the URL to paste elsewhere. */
+function cloneSheet(){
+  const o = S.repo.owner, r = S.repo.name;
+  const https = `https://github.com/${o}/${r}.git`;
+  const ssh   = `git@github.com:${o}/${r}.git`;
+  const cli   = `gh repo clone ${o}/${r}`;
+
+  const line = (label, val, id) => `
+    <div class="field">
+      <label>${label}</label>
+      <div style="display:flex; gap:8px">
+        <input type="text" readonly value="${esc(val)}" style="flex:1; font-family:var(--mono); font-size:12px">
+        <button class="btn small" id="${id}">Copy</button>
+      </div>
+    </div>`;
+
+  sheet('Clone', `
+    ${line('HTTPS', https, 'cl-https')}
+    ${line('SSH', ssh, 'cl-ssh')}
+    ${line('GitHub CLI', cli, 'cl-cli')}
+    <p class="hint" style="margin-bottom:16px">
+      gitfile edits this repo directly over the API — you never need to clone it
+      here. These are for pasting into a terminal on a computer.
+    </p>
+    <button class="btn wide" onclick="closeSheet()">Close</button>
+  `, () => {
+    const copy = (id, val) => $(id).onclick = () => {
+      if (window.Native && window.Native.copy) window.Native.copy(val);
+      else if (navigator.clipboard) navigator.clipboard.writeText(val);
+      toast('Copied');
+    };
+    copy('cl-https', https);
+    copy('cl-ssh', ssh);
+    copy('cl-cli', cli);
+  });
+}
+
+function gotoFileSheet(){
+  sheet('Go to file', `
+    <input type="text" id="gf-q" placeholder="Start typing a file name…"
+           spellcheck="false" autocapitalize="off">
+    <div id="gf-list" style="max-height:56vh; overflow:auto; margin-top:8px">
+      <div class="empty">Loading the file list…</div>
+    </div>`, () => { gotoFileLoad(); });
+}
+
+async function gotoFileLoad(){
+    const cacheKey = S.repo.owner + '/' + S.repo.name + ':' + S.branch;
+    if (!GOTO_FILES || GOTO_FILES.key !== cacheKey) {
+      try {
+        const t = await api.tree(S.repo.owner, S.repo.name, S.branch);
+        GOTO_FILES = { key: cacheKey, files: t.tree.filter(n => n.type === 'blob').map(n => n.path) };
+      } catch (e) {
+        if ($('gf-list')) $('gf-list').innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+        return;
+      }
+    }
+    if (!$('gf-q')) return;   // sheet closed before the tree arrived
+
+    const paint = () => {
+      const q = $('gf-q').value.trim().toLowerCase();
+      const files = q ? rankFiles(GOTO_FILES.files, q) : GOTO_FILES.files.slice(0, 50);
+
+      if (!files.length) { $('gf-list').innerHTML = '<div class="empty">No match.</div>'; return; }
+
+      $('gf-list').innerHTML = `<div class="filebox">${files.slice(0, 50).map((path, i) => `
+        <button class="rowmain" data-i="${i}" style="width:100%;border-top:1px solid var(--border)">
+          <span class="glyph ${fileClass(path.split('/').pop())}">${fileGlyph({ type:'file', name:path })}</span>
+          <span class="body" style="flex:1;min-width:0">
+            <span class="name">${esc(path.split('/').pop())}</span>
+            <span class="sub" style="display:block;color:var(--fg-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(path)}</span>
+          </span>
+        </button>`).join('')}</div>`;
+
+      $('gf-list').querySelectorAll('[data-i]').forEach(b => {
+        b.onclick = () => { closeSheet(); openFile(files[Number(b.dataset.i)]); };
+      });
+    };
+
+    $('gf-q').addEventListener('input', paint);
+    paint();
+    setTimeout(() => { if ($('gf-q')) $('gf-q').focus(); }, 60);
+}
+
+/* Subsequence match with a light score: matches where the query hits the file
+   name (not just the folder path) rank first, then shorter paths. */
+function rankFiles(files, q){
+  const scored = [];
+  for (const path of files) {
+    const lower = path.toLowerCase();
+    if (!isSubsequence(q, lower)) continue;
+    const name = path.split('/').pop().toLowerCase();
+    let score = 0;
+    if (name.includes(q)) score += 100;          // contiguous hit in the name
+    else if (lower.includes(q)) score += 50;     // contiguous somewhere
+    if (name.startsWith(q)) score += 50;
+    score -= path.length * 0.1;                   // prefer shorter paths
+    scored.push({ path, score });
+  }
+  return scored.sort((a, b) => b.score - a.score).map(x => x.path);
+}
+
+/* Are all of q's characters present in text, in order? "mainjava" ⊂ "…/MainActivity.java". */
+function isSubsequence(q, text){
+  let i = 0;
+  for (let j = 0; j < text.length && i < q.length; j++)
+    if (text[j] === q[i]) i++;
+  return i === q.length;
+}
+
 function newSheet(){
   sheet('New', `
     <div class="sheetlist">
@@ -2681,9 +2880,11 @@ function repoSheet(){
       ${canPR ? `<button id="r-delbr">Delete branch<small>Removes ${S.branch}. The commits survive in any PR.</small></button>` : ''}
       <button id="r-issues">Issues<small>Report, discuss, track</small></button>
       <button id="r-settings">Settings<small>Rename, default branch, features, danger zone</small></button>
+      <button id="r-clone">Clone URLs<small>HTTPS, SSH and CLI, to copy</small></button>
     </div>
     <button class="btn wide" onclick="closeSheet()">Close</button>
   `, () => {
+    $('r-clone').onclick    = () => { closeSheet(); cloneSheet(); };
     $('r-search').onclick   = () => { closeSheet(); openSearch(); };
     $('r-log').onclick      = () => { closeSheet(); openLog(null); };
     $('r-prs').onclick      = () => { closeSheet(); openPRs(); };
@@ -5313,7 +5514,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (b) b.onclick = () => flushQueue(false);
 });
 
-(async function boot(){
+async function boot(){
   paintBackend();
   applyDesktop((await store.get(DESKTOP_KEY)) === '1');
   paintRef();
@@ -5335,7 +5536,8 @@ document.addEventListener('DOMContentLoaded', () => {
     show('auth');
     toast('The saved token is no longer valid. Sign in again.', 6000);
   }
-})();
+}
+boot();
 </script>
 </body>
 </html>
