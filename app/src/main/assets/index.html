@@ -802,6 +802,18 @@ pre.log{
 .barstat{ display:flex; justify-content:space-between; gap:12px; font-size:12px; color:var(--fg-muted); }
 .barstat .now{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left; }
 
+/* The list of files staged to attach to a new release. */
+.attachlist{ display:flex; flex-direction:column; gap:6px; margin:8px 0; }
+.attachrow{
+  display:flex; align-items:center; gap:8px;
+  background:var(--inset); border:1px solid var(--border);
+  border-radius:var(--r); padding:8px 10px; font-size:13px;
+}
+.attachrow .an{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.attachrow .as{ color:var(--fg-muted); font-family:var(--mono); font-size:11px; flex:none; }
+.attachrow .ax{ background:none; border:none; color:var(--fg-muted); font-size:15px; cursor:pointer; padding:2px 6px; flex:none; }
+.attachrow .ax:active{ color:var(--red); }
+
 /* ══ Toast ═══════════════════════════════════════════════════ */
 #toast{
   position:fixed; left:0; right:0; bottom:0; z-index:50;
@@ -985,6 +997,7 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
   <!-- The file pickers. Hidden; opened from the New sheet. -->
   <input type="file" id="filepick" multiple style="display:none">
   <input type="file" id="dirpick" webkitdirectory directory style="display:none">
+  <input type="file" id="relpick" multiple style="display:none">   <!-- release assets -->
 
 </div>
 
@@ -3728,6 +3741,7 @@ async function takeAsset(files){
 
 /* ── Create a release ─────────────────────────────────────────────────── */
 function newReleaseSheet(){
+  S.relFiles = [];      // files staged to attach once the release is created
   sheet('New release', `
     <div class="field">
       <label for="rl-tag">Tag</label>
@@ -3743,6 +3757,12 @@ function newReleaseSheet(){
       <textarea id="rl-body" rows="4" placeholder="Markdown"></textarea>
     </div>
     <div class="field">
+      <label>Files</label>
+      <div id="rl-files" class="attachlist"></div>
+      <button class="btn small" id="rl-add">+ Add files</button>
+      <p class="hint">Attached to the release once it's published — APK, ZIP, anything. Uploaded with a progress bar.</p>
+    </div>
+    <div class="field">
       <label class="check"><input type="checkbox" id="rl-gen" checked><span class="box"></span>
         Generate notes from commits</label>
       <label class="check"><input type="checkbox" id="rl-pre"><span class="box"></span>
@@ -3753,7 +3773,32 @@ function newReleaseSheet(){
     <button class="btn solid wide" id="rl-go">Publish release</button>
     <div style="height:10px"></div>
     <button class="btn wide" onclick="closeSheet()">Cancel</button>
-  `, () => { $('rl-go').onclick = doNewRelease; });
+  `, () => {
+    renderRelFiles();
+    $('rl-add').onclick = () => $('relpick').click();
+    $('rl-go').onclick  = doNewRelease;
+  });
+}
+
+/* Paint the staged-files list inside the New release sheet, if it's open. Shared
+   by the sheet's own wiring and the #relpick change handler, so picking more
+   files always refreshes the same list. */
+function renderRelFiles(){
+  const box = $('rl-files');
+  if (!box) return;
+  const files = S.relFiles || [];
+  box.innerHTML = files.length
+    ? files.map((f, i) =>
+        `<div class="attachrow">
+           <span class="an">${esc(f.name)}</span>
+           <span class="as">${bytes(f.size)}</span>
+           <button class="ax" data-i="${i}" aria-label="Remove">✕</button>
+         </div>`).join('')
+    : '<p class="hint" style="margin:0">No files attached yet.</p>';
+  box.querySelectorAll('.ax').forEach(b => b.onclick = () => {
+    S.relFiles.splice(+b.dataset.i, 1);
+    renderRelFiles();
+  });
 }
 
 async function doNewRelease(){
@@ -3774,14 +3819,129 @@ async function doNewRelease(){
       // better at it than you will be at 11pm on a phone.
       generate_release_notes: $('rl-gen').checked
     });
-    closeSheet();
-    toast('Released ' + tag);
-    openRelease(rel.id);
+
+    const files = S.relFiles || [];
+    if (files.length) {
+      // Hand off to the uploader, which swaps in its own progress sheet and
+      // opens the release when every file is attached.
+      await uploadAssets(rel, files);
+    } else {
+      closeSheet();
+      toast('Released ' + tag);
+      openRelease(rel.id);
+    }
   } catch (e) {
     toast(e.status === 422 ? 'That tag already has a release.' : e.message, 6000);
   } finally {
     busy(btn, false);
   }
+}
+
+/* ── Uploading release assets, with a real progress bar ───────────────────
+   Assets go to uploads.github.com, whose cross-origin rules are unreliable in a
+   browser — which is why the app ships a native uploader. So each file is tried
+   two ways: first an XMLHttpRequest, because its upload.onprogress gives a true
+   byte-level percentage; and if that is blocked, the native bridge, which has no
+   per-byte signal but always gets through. Files upload one at a time so the bar
+   reads cleanly and a big APK never has to share bandwidth.
+   ──────────────────────────────────────────────────────────────────────── */
+async function uploadAssets(rel, files){
+  let done = 0;
+  const total = files.length;
+
+  sheet('Uploading', `
+    <div class="overwrite">
+      <b id="up-name">${esc(files[0].name)}</b><br>
+      <span id="up-count">File 1 of ${total}</span> → ${esc(rel.tag_name)}
+    </div>
+    <div class="bar"><i id="up-bar" style="width:0%"></i></div>
+    <div class="barstat">
+      <span class="now" id="up-now">Starting…</span>
+      <span id="up-pct">0%</span>
+    </div>
+    <div style="height:16px"></div>
+    <div id="up-act"></div>
+  `);
+
+  // Overall percentage across the whole batch: whole files done, plus the
+  // fraction of the file currently uploading.
+  const paint = frac => {
+    const pct = Math.min(100, Math.round(((done + frac) / total) * 100));
+    if ($('up-bar')) $('up-bar').style.width = pct + '%';
+    if ($('up-pct')) $('up-pct').textContent = pct + '%';
+  };
+
+  try {
+    for (let i = 0; i < total; i++) {
+      const f = files[i];
+      if ($('up-name'))  $('up-name').textContent  = f.name;
+      if ($('up-count')) $('up-count').textContent = 'File ' + (i + 1) + ' of ' + total;
+      if ($('up-now'))   $('up-now').textContent   = 'Uploading ' + f.name;
+      await uploadOneAsset(rel.upload_url, f, paint);
+      done++;
+      paint(0);
+    }
+    if ($('up-now')) $('up-now').textContent = total === 1 ? 'Uploaded' : 'Uploaded ' + total + ' files';
+    S.relFiles = [];
+    setTimeout(() => { closeSheet(); openRelease(rel.id); }, 700);
+  } catch (e) {
+    // The release itself already exists — only an asset failed. Let the user in.
+    if ($('up-now')) $('up-now').textContent = e.message;
+    if ($('up-act')) {
+      $('up-act').innerHTML =
+        `<button class="btn wide" id="up-view">The release was created — open it</button>`;
+      $('up-view').onclick = () => { closeSheet(); openRelease(rel.id); };
+    }
+  }
+}
+
+/* Upload one file. Resolves when GitHub has it; onProgress(fraction 0..1) is
+   called as the bytes go up (XHR path) or once at the end (native path). */
+function uploadOneAsset(uploadUrl, file, onProgress){
+  // upload_url is a URI template: ".../assets{?name,label}". Drop the template
+  // and pass the name ourselves.
+  const base = String(uploadUrl).replace(/\{[^}]*\}$/, '');
+  const url  = base + '?name=' + encodeURIComponent(file.name);
+  const type = file.type || 'application/octet-stream';
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = fn => { if (!settled) { settled = true; fn(); } };
+
+    // Fallback: the native bridge the app already ships with.
+    const native = () => {
+      if (!window.Native || !window.Native.uploadAsset) {
+        finish(() => reject(new Error('Upload blocked, and no native uploader available.')));
+        return;
+      }
+      window.onAssetUploaded = (name, err) => {
+        window.onAssetUploaded = null;
+        if (err) finish(() => reject(new Error(err)));
+        else     finish(() => { onProgress(1); resolve('native'); });
+      };
+      fileToB64(file)
+        .then(b64 => window.Native.uploadAsset(uploadUrl, S.token, file.name, type, b64))
+        .catch(e => finish(() => reject(e)));
+    };
+
+    // Preferred: XMLHttpRequest, for real byte-level progress.
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url, true);
+      xhr.setRequestHeader('Authorization', 'Bearer ' + S.token);
+      xhr.setRequestHeader('Content-Type', type);
+      xhr.setRequestHeader('Accept', 'application/vnd.github+json');
+      xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+      xhr.onload  = () => {
+        if (xhr.status >= 200 && xhr.status < 300) finish(() => { onProgress(1); resolve('xhr'); });
+        else native();   // rejected (e.g. 422 duplicate name) or an error body
+      };
+      xhr.onerror = () => native();   // almost always cross-origin being blocked
+      xhr.send(file);                 // streams the File directly — no base64, no big buffer
+    } catch (e) {
+      native();
+    }
+  });
 }
 
 /* ── Edit or delete ───────────────────────────────────────────────────── */
@@ -5568,6 +5728,16 @@ function paintBackend(){
 $('assetpick').addEventListener('change', e => {
   takeAsset(e.target.files);
   e.target.value = '';        // so picking the same file twice still fires
+});
+
+// Release assets staged in the New release sheet. Appends, so tapping "Add
+// files" more than once (or a picker that only returns one at a time) accrues.
+$('relpick').addEventListener('change', e => {
+  const picked = [...e.target.files];
+  e.target.value = '';
+  if (!picked.length) return;
+  S.relFiles = (S.relFiles || []).concat(picked);
+  renderRelFiles();
 });
 
 // Offline queue: flush automatically the moment the connection returns, and let
