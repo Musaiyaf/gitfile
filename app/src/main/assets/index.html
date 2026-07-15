@@ -164,11 +164,13 @@ h1{
 }
 .filebox .row:first-child{ border-top:0; }
 .row:hover{ background:var(--subtle); }
-.row .glyph{ color:var(--fg-muted); width:18px; flex:none; font-size:13px; text-align:center; }
-.row.dir .glyph, .glyph.g-dir{ color:var(--accent); }
-.glyph.g-img{ color:#A5D6FF; }
-.glyph.g-cfg{ color:var(--fg-subtle); }
-.glyph.g-doc{ color:var(--fg-muted); }
+.row .glyph{
+  width:20px; flex:none; font-size:15px; text-align:center;
+  line-height:1;
+}
+/* Files sit back a little so folders lead the eye, the way GitHub's blue folder
+   icons do. Emoji don't take a text colour, so this is opacity, not colour. */
+.row:not(.dir) .glyph{ opacity:.85; }
 .row .name{
   flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   color:var(--fg);
@@ -1607,50 +1609,29 @@ $('branchsel').onchange = async e => {
    a gear for config, and so on. Extension-driven, with a few special-cased
    names GitHub also treats specially.
    ──────────────────────────────────────────────────────────────────────── */
-const FILE_GLYPH = {
-  // code
-  js:'ᴊꜱ', jsx:'ᴊꜱ', ts:'ᴛꜱ', tsx:'ᴛꜱ', mjs:'ᴊꜱ', cjs:'ᴊꜱ',
-  java:'☕', kt:'◆', kts:'◆', py:'🐍', rb:'◆', go:'◆', rs:'◆',
-  c:'ⓒ', h:'ⓒ', cpp:'⧉', cs:'◆', swift:'◆', php:'◆', lua:'◆', dart:'◆',
-  // markup / style
-  html:'◇', htm:'◇', xml:'◇', svg:'▦', vue:'◇',
-  css:'▤', scss:'▤', sass:'▤', less:'▤',
-  // data / config
-  json:'⚙', yml:'⚙', yaml:'⚙', toml:'⚙', ini:'⚙', env:'⚙',
-  properties:'⚙', gradle:'⚙', lock:'⚿',
-  // docs
-  md:'❡', markdown:'❡', txt:'≡', pdf:'⬓', rtf:'≡',
-  // images
-  png:'▦', jpg:'▦', jpeg:'▦', gif:'▦', webp:'▦', bmp:'▦', ico:'▦', avif:'▦',
-  // archives / binaries
-  zip:'⬢', tar:'⬢', gz:'⬢', apk:'📦', jar:'⬢', aar:'⬢',
-  // shell
-  sh:'❯', bash:'❯', zsh:'❯', bat:'❯'
-};
-
-// Names GitHub gives a specific icon regardless of extension.
-const FILE_NAMED = {
-  'readme.md':'❡', 'readme':'❡', 'license':'⚖', 'license.md':'⚖',
-  '.gitignore':'◈', '.gitattributes':'◈',
-  'dockerfile':'⬡', 'makefile':'⚙',
-  'package.json':'⚙', 'settings.gradle':'⚙', 'build.gradle':'⚙'
-};
+// Only glyphs every Android system font reliably carries. The distinction is by
+// class (colour/weight in CSS), not by inventing a symbol per language that then
+// renders as a tofu box on half of devices.
+const CFG_EXT = /^(json|ya?ml|toml|ini|env|properties|gradle|lock|cfg|conf)$/;
+const IMG_EXT = /^(png|jpe?g|gif|webp|bmp|ico|avif|svg|heic)$/;
+const DOC_EXT = /^(md|markdown|txt|rtf|pdf)$/;
+const CFG_NAME = new Set(['.gitignore','.gitattributes','.editorconfig','dockerfile',
+  'makefile','package.json','settings.gradle','build.gradle','gradle.properties']);
 
 function fileGlyph(it){
-  if (it.type === 'dir') return '▸';
-  const name = it.name.toLowerCase();
-  if (FILE_NAMED[name]) return FILE_NAMED[name];
-  const ext = name.includes('.') ? name.split('.').pop() : '';
-  return FILE_GLYPH[ext] || '▤';        // a plain document for anything unknown
+  if (it.type === 'dir') return '📁';    // folder
+  const n = it.name.toLowerCase();
+  const ext = n.includes('.') ? n.split('.').pop() : '';
+  if (IMG_EXT.test(ext)) return '🖼';     // picture
+  return '📄';                            // page — everything else
 }
 
 function fileClass(name){
   const n = name.toLowerCase();
   const ext = n.includes('.') ? n.split('.').pop() : '';
-  if (/^(png|jpe?g|gif|webp|bmp|ico|avif|svg)$/.test(ext)) return 'g-img';
-  if (/^(json|ya?ml|toml|ini|env|properties|gradle|lock)$/.test(ext) ||
-      FILE_NAMED[n] === '⚙') return 'g-cfg';
-  if (/^(md|markdown|txt)$/.test(ext)) return 'g-doc';
+  if (IMG_EXT.test(ext)) return 'g-img';
+  if (CFG_EXT.test(ext) || CFG_NAME.has(n)) return 'g-cfg';
+  if (DOC_EXT.test(ext)) return 'g-doc';
   return 'g-file';
 }
 
@@ -3216,7 +3197,10 @@ function wireSettings(R){
    ISSUES
    ═══════════════════════════════════════════════════════════════════════ */
 async function openIssues(state){
-  state = state || 'open';
+  // Guard against a click event arriving here as the argument — an onclick
+  // handler passes the event as arg 0, and "state=[object PointerEvent]" is a
+  // 422 from GitHub. Only 'open' or 'closed' are ever valid.
+  state = (state === 'closed') ? 'closed' : 'open';
   S.issueState = state;
   show('issues');
 
@@ -3229,7 +3213,7 @@ async function openIssues(state){
     <div class="filebox"><div id="isslist"><div class="empty">Loading…</div></div></div>`;
 
   $('is-open').onclick   = () => openIssues('open');
-  $('is-closed').onclick = () => openIssues('closed');
+  $('is-closed').onclick = () => openIssues('closed');   // event never reaches the arg
 
   setBar([
     { label:'Back',      onClick:() => loadTree(S.path) },
@@ -3261,14 +3245,7 @@ async function openIssues(state){
       list.appendChild(b);
     });
   } catch (e) {
-    // Show GitHub's own words, verbatim, plus the status. Whatever "invalid"
-    // really means, it will be in here.
-    const raw = e.raw ? JSON.stringify(e.raw, null, 1) : '';
-    $('isslist').innerHTML = `
-      <div class="empty" style="text-align:left">
-        <b>HTTP ${e.status || '?'}</b><br>${esc(e.message)}
-        ${raw ? `<pre style="margin-top:12px;white-space:pre-wrap;font-size:11px;color:var(--fg-subtle)">${esc(raw)}</pre>` : ''}
-      </div>`;
+    $('isslist').innerHTML = `<div class="empty">${esc(e.message)}</div>`;
   }
 }
 
@@ -3303,7 +3280,7 @@ async function openIssue(n){
         </div>`).join('')}`;
 
     setBar([
-      { label:'Back',    onClick:() => openIssues(S.issueState || 'open') },
+      { label:'Back',    onClick:() => openIssues(S.issueState) },
       { label:'Comment', onClick:() => commentSheet(iss) },
       iss.state === 'open'
         ? { label:'Close',  onClick:() => setIssueState(iss, 'closed'), solid:true }
