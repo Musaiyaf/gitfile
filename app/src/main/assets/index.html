@@ -439,6 +439,20 @@ input.masked.plain{ -webkit-text-security:none; letter-spacing:0; }
 .md th,.md td{ border:1px solid var(--border); padding:6px 13px; }
 .md tr:nth-child(2n){ background:var(--inset); }
 
+/* Boot splash — just the GitHub mark, held briefly on launch. */
+.boot{ min-height:80vh; display:flex; align-items:center; justify-content:center; }
+.bootlogo{ color:var(--fg); animation:bootpulse 1.4s ease-in-out infinite; }
+@keyframes bootpulse{ 0%,100%{ opacity:.55; } 50%{ opacity:1; } }
+
+/* Sign-in Help sheet */
+.authhelp{ font-size:14px; line-height:1.5; color:var(--fg); }
+.authhelp p{ margin:0 0 12px; }
+.authhelp .ahsec{ font-weight:600; font-size:13px; margin:16px 0 6px; }
+.authhelp ol.ahlist, .authhelp ul.ahlist{ margin:0 0 4px; padding-left:20px; display:flex; flex-direction:column; gap:6px; }
+.authhelp .ahlist li{ line-height:1.45; }
+.authhelp .dim{ color:var(--fg-muted); }
+.authhelp .mono{ font-family:var(--mono); font-size:.9em; }
+
 /* ══ Repo About panel — mirrors GitHub's sidebar, stacked for mobile ══ */
 .repolayout{ display:flex; flex-direction:column; }
 .repomain{ min-width:0; }
@@ -923,8 +937,19 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
 
   <main>
 
+    <!-- ── 0. Boot splash ─────────────────────────────────────
+         The first thing painted, so a signed-in user never sees the sign-in
+         form flash by while the saved token loads. boot() routes off this. -->
+    <section class="view on" id="v-boot">
+      <div class="boot">
+        <svg class="bootlogo" viewBox="0 0 16 16" width="76" height="76" aria-hidden="true">
+          <path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+        </svg>
+      </div>
+    </section>
+
     <!-- ── 1. Sign in ─────────────────────────────────────── -->
-    <section class="view on" id="v-auth">
+    <section class="view" id="v-auth">
       <h1>Sign in</h1>
       <div class="pad">
 
@@ -938,12 +963,6 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
             <span id="tokcount">0 characters</span>
             <button type="button" id="tokshow">show</button>
           </div>
-          <p class="hint">
-            Create a <b>fine-grained personal access token</b> at
-            <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener">github.com/settings/tokens</a>.
-            Grant these repository permissions: <b>Contents → Read and write</b>,
-            <b>Pull requests → Read and write</b>, <b>Metadata → Read</b>.
-          </p>
         </div>
 
         <div class="field">
@@ -952,15 +971,11 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
             <span class="box"></span>
             Keep me signed in on this device
           </label>
-          <p class="hint">
-            The token is never sent anywhere except api.github.com. On a shared device,
-            leave this off — the token then lives in memory and is gone when you close
-            the app.
-          </p>
-          <p class="hint">Saving to: <b id="backend">…</b></p>
         </div>
 
         <button class="btn solid wide" id="signin">Sign in</button>
+        <div style="height:10px"></div>
+        <button class="btn wide" id="authhelp">Help — how to sign in</button>
       </div>
     </section>
 
@@ -1676,6 +1691,48 @@ function busy(btn, on, label){
 /* ── 6. SCREENS ───────────────────────────────────────────── */
 
 /* --- 6a. Sign in -------------------------------------------- */
+
+/* The Help sheet: how to make a token, how to sign in, and exactly which
+   permissions to grant. Everything that used to clutter the sign-in page. */
+function authHelp(){
+  sheet('How to sign in', `
+    <div class="authhelp">
+      <p>gitfile signs in with a <b>GitHub personal access token</b> — there's no password. Make one, paste it into the box, and tap Sign in.</p>
+
+      <div class="ahsec">Steps</div>
+      <ol class="ahlist">
+        <li>Open <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener">github.com/settings/tokens</a> and create a <b>fine-grained token</b>.</li>
+        <li>Under <b>Repository access</b>, pick <b>All repositories</b> (a repo the token can't reach reads fine but every write fails).</li>
+        <li>Grant the permissions listed below, then generate the token.</li>
+        <li>Copy it — it starts with <span class="mono">github_pat_</span> — paste it in, and tap <b>Sign in</b>.</li>
+      </ol>
+      <p class="dim">A classic token (starting <span class="mono">ghp_</span>) also works; give it the <span class="mono">repo</span> scope, plus <span class="mono">workflow</span> for Actions and <span class="mono">user</span> to edit your profile.</p>
+
+      <div class="ahsec">Repository permissions</div>
+      <ul class="ahlist">
+        <li><b>Contents</b> — Read and write <span class="dim">· browsing, editing, commits, branches</span></li>
+        <li><b>Metadata</b> — Read-only <span class="dim">· added automatically</span></li>
+        <li><b>Pull requests</b> — Read and write</li>
+        <li><b>Actions</b> — Read and write <span class="dim">· workflows, runs, logs</span></li>
+        <li><b>Administration</b> — Read and write <span class="dim">· optional; create repos, public/private</span></li>
+      </ul>
+
+      <div class="ahsec">Account permissions</div>
+      <ul class="ahlist">
+        <li><b>Profile</b> — Read and write <span class="dim">· to edit your profile</span></li>
+        <li><b>Starring</b> — Read and write <span class="dim">· optional; your starred repos</span></li>
+      </ul>
+
+      <div class="ahsec">Keep me signed in</div>
+      <p><b>On</b> keeps the token on this device so you stay signed in. <b>Off</b> keeps it only in memory — it's gone when you close the app. Use Off on a shared device.</p>
+
+      <p class="dim">Your token is only ever sent to api.github.com. Saving to: <b id="backend">…</b></p>
+    </div>
+    <button class="btn solid wide" onclick="closeSheet()">Got it</button>
+  `, () => { paintBackend(); });
+}
+$('authhelp').onclick = authHelp;
+
 $('signin').onclick = async () => {
   // Mobile keyboards and clipboards love to add a trailing space or newline,
   // and GitHub rejects the token outright if one sneaks in.
@@ -6105,16 +6162,30 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 async function boot(){
+  const t0 = Date.now();
   paintBackend();
-  try { applyDesktop((await store.get(DESKTOP_KEY)) === '1'); } catch {}
-  paintRef();
 
-  // Restore the token FIRST — before anything that could throw. Nothing at boot
+  // Restore the token FIRST and decide the destination before any network call,
+  // so a signed-in user is routed straight past the sign-in screen. Nothing here
   // is allowed to log the user out except GitHub actually rejecting the token.
   let saved = null;
   try { saved = await store.get(TOKEN_KEY); } catch {}
-  if (!saved) { setBar(null); return; }
+
+  // Desktop preference is cosmetic — apply it, but never let it gate the view.
+  try { applyDesktop((await store.get(DESKTOP_KEY)) === '1'); } catch {}
+  paintRef();
+
+  // Hold the splash for a readable minimum so the logo isn't just a flash.
+  await holdSplash(t0);
+
+  if (!saved) { show('auth'); setBar(null); return; }
   S.token = saved;
+
+  // Leave the splash for the repos list (with its own Loading… state) BEFORE the
+  // network round-trip, so the sign-in form is never shown to a signed-in user.
+  show('repos');
+  const bootList = $('repolist');
+  if (bootList) bootList.innerHTML = '<div class="empty">Loading…</div>';
 
   // The offline queue flush must never crash boot; wrap it and ignore failures.
   paintQueueBadge();
@@ -6153,6 +6224,12 @@ async function boot(){
     }
   }
 }
+/* Keep the splash up for a readable minimum, however fast the token loads. */
+const SPLASH_MIN = 1500;
+function holdSplash(t0){
+  return new Promise(r => setTimeout(r, Math.max(0, SPLASH_MIN - (Date.now() - t0))));
+}
+
 boot();
 </script>
 </body>
