@@ -317,27 +317,31 @@ input.masked.plain{ -webkit-text-security:none; letter-spacing:0; }
 .pathbar input.moved{ color:var(--amber); }
 
 #editstat{
-  display:flex; gap:16px; align-items:center;
+  display:flex; gap:10px; align-items:center;
   background:var(--inset);
   border:1px solid var(--border); border-bottom:0;
   padding:8px 12px;
   font-size:12px; color:var(--fg-muted); font-family:var(--mono);
 }
+#editstat .statwrap{ flex:1 1 auto; min-width:0; display:flex; gap:10px; overflow:hidden; white-space:nowrap; }
+#editstat .statwrap > span{ overflow:hidden; text-overflow:ellipsis; }
 #editstat #stat-state{ color:var(--fg-muted); }
-#editstat .fspace{ margin-left:auto; }
 #editstat .ficon{
+  flex:none;
   background:none; border:1px solid var(--border-lit); border-radius:var(--r);
   color:var(--fg-muted); font:inherit; font-size:12px; font-family:var(--mono);
-  padding:3px 9px; cursor:pointer;
+  padding:4px 12px; cursor:pointer;
 }
 #editstat .ficon:active{ background:var(--inset); color:var(--fg); }
 #editstat .ficon.edit{ border-color:var(--accent); color:var(--accent-em); }
 
 /* Repos screen entry row */
 .reptop{ display:flex; gap:8px; margin:-4px 0 12px; }
+.glyph .gi{ vertical-align:-2px; }
 
 /* In-file find bar */
-#findbar{ display:flex; align-items:center; gap:6px; padding:8px 0 4px; }
+#findbar{ padding:8px 0 4px; display:flex; flex-direction:column; gap:6px; }
+#findbar .findrow{ display:flex; align-items:center; gap:6px; }
 #findbar input{ flex:1; font-size:14px; }
 #findbar #findcount{ font-family:var(--mono); font-size:12px; color:var(--fg-muted); min-width:44px; text-align:center; }
 
@@ -381,7 +385,7 @@ input.masked.plain{ -webkit-text-security:none; letter-spacing:0; }
 #editor, #hl{
   margin:0; padding:12px 12px 12px 52px;   /* room for the line-number gutter */
   border:0; box-shadow:none;
-  font-family:var(--mono); font-size:12px; line-height:20px;
+  font-family:var(--mono); font-size:var(--edfs,12px); line-height:var(--edlh,20px);
   white-space:pre; overflow-wrap:normal; tab-size:2;
   box-sizing:border-box;
 }
@@ -405,7 +409,7 @@ input.masked.plain{ -webkit-text-security:none; letter-spacing:0; }
 #gut{
   position:absolute; top:0; left:0; bottom:0; width:44px;
   padding:12px 8px 12px 0;
-  font-family:var(--mono); font-size:12px; line-height:20px;
+  font-family:var(--mono); font-size:var(--edfs,12px); line-height:var(--edlh,20px);
   color:var(--fg-subtle); text-align:right;
   background:var(--canvas);
   border-right:1px solid var(--border);
@@ -414,14 +418,28 @@ input.masked.plain{ -webkit-text-security:none; letter-spacing:0; }
 }
 
 /* ── Tokens: GitHub's own syntax palette ── */
-.t-key { color:#FF7B72; }   /* keyword    */
-.t-str { color:#A5D6FF; }   /* string     */
-.t-num { color:#79C0FF; }   /* number     */
-.t-com { color:#8B949E; }   /* comment    */
-.t-fn  { color:#D2A8FF; }   /* call site  */
-.t-pun { color:#C9D1D9; }   /* punctuation*/
-.t-tag { color:#7EE787; }   /* markup tag */
-.t-att { color:#79C0FF; }   /* attribute  */
+.t-key { color:var(--t-key); }   /* keyword    */
+.t-str { color:var(--t-str); }   /* string     */
+.t-num { color:var(--t-num); }   /* number     */
+.t-com { color:var(--t-com); }   /* comment    */
+.t-fn  { color:var(--t-fn);  }   /* call site  */
+.t-pun { color:var(--t-pun); }   /* punctuation*/
+.t-tag { color:var(--t-tag); }   /* markup tag */
+.t-att { color:var(--t-att); }   /* attribute  */
+
+/* Editor themes. Default is GitHub dark; the others swap the token palette. */
+:root{
+  --t-key:#FF7B72; --t-str:#A5D6FF; --t-num:#79C0FF; --t-com:#8B949E;
+  --t-fn:#D2A8FF;  --t-pun:#C9D1D9; --t-tag:#7EE787; --t-att:#79C0FF;
+}
+body.theme-mono{
+  --t-key:#E6EDF3; --t-str:#ADBAC7; --t-num:#ADBAC7; --t-com:#6E7681;
+  --t-fn:#E6EDF3;  --t-pun:#8B949E; --t-tag:#E6EDF3; --t-att:#ADBAC7;
+}
+body.theme-aurora{
+  --t-key:#C792EA; --t-str:#C3E88D; --t-num:#F78C6C; --t-com:#546E7A;
+  --t-fn:#82AAFF;  --t-pun:#89DDFF; --t-tag:#F07178; --t-att:#FFCB6B;
+}
 
 /* ══ Diff ════════════════════════════════════════════════════ */
 .diff{
@@ -995,6 +1013,7 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
         <input id="pin" type="password" inputmode="numeric" pattern="[0-9]*"
                placeholder="Enter PIN" autocomplete="off" maxlength="12">
         <button class="btn solid wide" id="pinunlock">Unlock</button>
+        <button class="btn wide" id="pinbio" style="display:none">Use fingerprint</button>
         <div id="pinerr" class="lockerr"></div>
       </div>
     </section>
@@ -1034,7 +1053,7 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
     <section class="view" id="v-repos">
       <h1>Repositories</h1>
       <div class="reptop">
-        <button class="btn small" id="go-notes">🔔 Notifications</button>
+        <button class="btn small" id="go-notes">Notifications</button>
         <button class="btn small" id="go-gists">Gists</button>
       </div>
       <div id="repolist"></div>
@@ -1074,27 +1093,31 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
       </div>
 
       <div id="editstat">
-        <span id="stat-lines">0 lines</span>
-        <span id="stat-bytes">0 B</span>
-        <span id="stat-state">read-only</span>
-        <span class="fspace"></span>
-        <button class="ficon" id="fi-raw"  aria-label="Open raw file">Raw</button>
-        <button class="ficon" id="fi-copy" aria-label="Copy file contents">⧉ Copy</button>
-        <button class="ficon" id="fi-dl"   aria-label="Download file">⤓</button>
-        <button class="ficon" id="fi-find" aria-label="Find in file">🔍</button>
-        <button class="ficon" id="fi-blame" aria-label="Blame">Blame</button>
-        <button class="ficon" id="fi-diff" aria-label="View your changes" style="display:none">⇄ Diff</button>
-        <button class="ficon edit" id="fi-edit" aria-label="Edit this file">✎ Edit</button>
+        <span class="statwrap">
+          <span id="stat-lines">0 lines</span>
+          <span id="stat-bytes">0 B</span>
+          <span id="stat-state">read-only</span>
+        </span>
+        <button class="ficon edit" id="fi-edit">Edit</button>
+        <button class="ficon" id="fi-more" aria-label="More actions">⋯</button>
       </div>
 
-      <!-- In-file find bar, toggled by the 🔍 button. -->
+      <!-- In-file find bar, opened from the More (⋯) menu. -->
       <div id="findbar" style="display:none">
-        <input type="text" id="findq" placeholder="Find in file" autocomplete="off"
-               autocapitalize="off" autocorrect="off" spellcheck="false">
-        <span id="findcount">0/0</span>
-        <button class="ficon" id="findprev" aria-label="Previous">↑</button>
-        <button class="ficon" id="findnext" aria-label="Next">↓</button>
-        <button class="ficon" id="findclose" aria-label="Close">✕</button>
+        <div class="findrow">
+          <input type="text" id="findq" placeholder="Find  (or :42 to jump to a line)" autocomplete="off"
+                 autocapitalize="off" autocorrect="off" spellcheck="false">
+          <span id="findcount">0/0</span>
+          <button class="ficon" id="findprev" aria-label="Previous">↑</button>
+          <button class="ficon" id="findnext" aria-label="Next">↓</button>
+          <button class="ficon" id="findclose" aria-label="Close">✕</button>
+        </div>
+        <div class="findrow" id="replrow" style="display:none">
+          <input type="text" id="replq" placeholder="Replace with" autocomplete="off"
+                 autocapitalize="off" autocorrect="off" spellcheck="false">
+          <button class="ficon" id="replone">Replace</button>
+          <button class="ficon" id="replall">All</button>
+        </div>
       </div>
 
       <!-- Shown only when a local draft from a previous, interrupted edit exists. -->
@@ -1857,7 +1880,9 @@ function authHelp(){
       <ul class="ahlist">
         <li><b>Profile</b> — Read and write <span class="dim">· to edit your profile</span></li>
         <li><b>Starring</b> — Read and write <span class="dim">· optional; your starred repos</span></li>
+        <li><b>Gists</b> — Read and write <span class="dim">· optional; the Gists screen</span></li>
       </ul>
+      <p class="dim">The Notifications inbox needs a <b>classic</b> token with the <span class="mono">notifications</span> scope — fine-grained tokens don't expose it.</p>
 
       <div class="ahsec">Keep me signed in</div>
       <p><b>On</b> keeps the token on this device so you stay signed in. <b>Off</b> keeps it only in memory — it's gone when you close the app. Use Off on a shared device.</p>
@@ -2268,12 +2293,16 @@ const DOC_EXT = /^(md|markdown|txt|rtf|pdf)$/;
 const CFG_NAME = new Set(['.gitignore','.gitattributes','.editorconfig','dockerfile',
   'makefile','package.json','settings.gradle','build.gradle','gradle.properties']);
 
+const ICON_DIR  = '<svg class="gi" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M1.5 3.25A1.25 1.25 0 0 1 2.75 2h3.19c.331 0 .649.132.883.366L8.06 3.5h5.19A1.25 1.25 0 0 1 14.5 4.75v8A1.25 1.25 0 0 1 13.25 14H2.75A1.25 1.25 0 0 1 1.5 12.75z"/></svg>';
+const ICON_FILE = '<svg class="gi" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M3.5 1.75A.75.75 0 0 1 4.25 1H9l4 4v9.25a.75.75 0 0 1-.75.75h-8a.75.75 0 0 1-.75-.75zM9 2.5V5h2.5z"/></svg>';
+const ICON_IMG  = '<svg class="gi" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="5.8" cy="6.6" r="1.1" fill="currentColor"/><path d="M3.5 12l3-3 2 2 2-2.2 2 2.2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>';
+
 function fileGlyph(it){
-  if (it.type === 'dir') return '📁';    // folder
+  if (it.type === 'dir') return ICON_DIR;    // folder
   const n = it.name.toLowerCase();
   const ext = n.includes('.') ? n.split('.').pop() : '';
-  if (IMG_EXT.test(ext)) return '🖼';     // picture
-  return '📄';                            // page — everything else
+  if (IMG_EXT.test(ext)) return ICON_IMG;    // picture
+  return ICON_FILE;                          // page — everything else
 }
 
 function fileClass(name){
@@ -2470,19 +2499,19 @@ async function paintAbout(){
       <div class="abbody">
         ${info.description ? `<div class="desc">${esc(info.description)}</div>`
                            : `<div class="desc muted">No description, website, or topics provided.</div>`}
-        ${info.homepage ? `<a class="ablink" href="${esc(info.homepage)}" target="_blank" rel="noopener">🔗 ${esc(info.homepage)}</a>` : ''}
+        ${info.homepage ? `<a class="ablink" href="${esc(info.homepage)}" target="_blank" rel="noopener">${esc(info.homepage)}</a>` : ''}
         ${topics.length ? `<div class="topics">${topics.map(t => `<span class="topic">${esc(t)}</span>`).join('')}</div>` : ''}
 
         <div class="abstats">
-          <span><b>${num(info.stargazers_count)}</b> ★ stars</span>
-          <span><b>${num(info.subscribers_count)}</b> 👁 watching</span>
-          <span><b>${num(info.forks_count)}</b> ⑂ forks</span>
+          <span><b>${num(info.stargazers_count)}</b> stars</span>
+          <span><b>${num(info.subscribers_count)}</b> watching</span>
+          <span><b>${num(info.forks_count)}</b> forks</span>
         </div>
 
         <div class="abmeta">
-          ${lic ? `<div>⚖ ${esc(lic)} license</div>` : ''}
-          <div>● ${num(info.open_issues_count)} open issue${info.open_issues_count === 1 ? '' : 's'} & PRs</div>
-          <div>◷ Updated ${info.pushed_at ? ago(info.pushed_at) + ' ago' : '—'}</div>
+          ${lic ? `<div>${esc(lic)} license</div>` : ''}
+          <div>${num(info.open_issues_count)} open issue${info.open_issues_count === 1 ? '' : 's'} &amp; PRs</div>
+          <div>Updated ${info.pushed_at ? ago(info.pushed_at) + ' ago' : '—'}</div>
         </div>
 
         ${langRows.length ? `
@@ -2952,7 +2981,6 @@ function showDiffSheet(){
     <button class="btn wide" onclick="closeSheet()">Close</button>
   `, () => { $('df-commit').onclick = () => { closeSheet(); commitSheet(); }; });
 }
-$('fi-diff').onclick = showDiffSheet;
 
 /* Keep the buffer, the stats, the dirty mark and the commit button in sync. */
 $('editor').addEventListener('input', e => {
@@ -2990,23 +3018,21 @@ function paintStats(){
    this bar), so each guards on S.file being present. */
 const fileBase = () => (S.file ? S.file.path.split('/').pop() : 'file.txt');
 
-$('fi-raw').onclick = () => {
+function doRaw(){
   if (!S.file || !S.file.raw) { toast('No raw URL for this file.'); return; }
   // download_url carries a short-lived token, so it opens even for private repos.
   if (window.Native && window.Native.openUrl) window.Native.openUrl(S.file.raw);
   else window.open(S.file.raw, '_blank');
-};
+}
 
-$('fi-copy').onclick = () => {
+function doCopy(){
   const text = S.buffer || '';
   if (window.Native && window.Native.copy) window.Native.copy(text);
   else if (navigator.clipboard) navigator.clipboard.writeText(text);
   toast('Copied ' + fileBase());
-};
+}
 
-$('fi-edit').onclick = () => enterEdit();
-
-$('fi-dl').onclick = () => {
+function doDownload(){
   const name = fileBase();
   // Prefer the native downloader with the real raw URL — most reliable in-app.
   if (window.Native && window.Native.download && S.file && S.file.raw) {
@@ -3023,7 +3049,36 @@ $('fi-dl').onclick = () => {
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(u), 1500);
   } catch { toast('Could not download this file.'); }
-};
+}
+
+/* The "⋯" menu — the way GitHub tucks the file actions away instead of a row
+   that runs off the screen. Contents depend on whether you're editing. */
+function fileMenu(){
+  const editing = S.editing;
+  sheet(fileBase(), `
+    <div class="sheetlist">
+      ${!editing ? '<button id="m-edit">Edit file<small>Edit in place, then commit</small></button>' : ''}
+      ${editing  ? '<button id="m-diff">View changes<small>Diff of your uncommitted edits</small></button>' : ''}
+      <button id="m-find">Find in file<small>Search${editing ? ' and replace' : ''}, or :42 to jump to a line</small></button>
+      <button id="m-blame">Blame<small>Who last changed each line</small></button>
+      <button id="m-raw">Open raw<small>The plain file on GitHub</small></button>
+      <button id="m-copy">Copy contents</button>
+      <button id="m-dl">Download</button>
+    </div>
+    <button class="btn wide" onclick="closeSheet()">Close</button>
+  `, () => {
+    if ($('m-edit')) $('m-edit').onclick = () => { closeSheet(); enterEdit(); };
+    if ($('m-diff')) $('m-diff').onclick = () => { closeSheet(); showDiffSheet(); };
+    $('m-find').onclick  = () => { closeSheet(); toggleFind(); };
+    $('m-blame').onclick = () => { closeSheet(); openBlame(); };
+    $('m-raw').onclick   = () => { closeSheet(); doRaw(); };
+    $('m-copy').onclick  = () => { closeSheet(); doCopy(); };
+    $('m-dl').onclick    = () => { closeSheet(); doDownload(); };
+  });
+}
+
+$('fi-edit').onclick = () => enterEdit();
+$('fi-more').onclick = fileMenu;
 
 function refreshCommitBtn(){
   const b = $('commitbtn');
@@ -4029,7 +4084,7 @@ async function tickRun(){
               <div class="ahead">Artifacts</div>
               ${live.map((a, i) => `
                 <button class="art" id="art-${i}">
-                  <span class="g">⤓</span>
+                  <span class="g"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path fill="currentColor" d="M7.25 1.5v6.19L4.78 5.22 3.72 6.28 8 10.56l4.28-4.28-1.06-1.06-2.47 2.47V1.5zM3 12.25h10v1.5H3z"/></svg></span>
                   <span class="n">${esc(a.name)}</span>
                   <span class="s">${bytes(a.size_in_bytes)}</span>
                 </button>`).join('')}
@@ -4193,7 +4248,7 @@ async function openRelease(id){
         <div class="ahead">Assets · ${r.assets.length + 2}</div>
         ${r.assets.map((a, i) => `
           <button class="asset" id="as-${i}">
-            <span class="g">⤓</span>
+            <span class="g"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path fill="currentColor" d="M7.25 1.5v6.19L4.78 5.22 3.72 6.28 8 10.56l4.28-4.28-1.06-1.06-2.47 2.47V1.5zM3 12.25h10v1.5H3z"/></svg></span>
             <span class="n">${esc(a.name)}</span>
             <span class="dl">${a.download_count}↓</span>
             <span class="s">${bytes(a.size)}</span>
@@ -4202,10 +4257,10 @@ async function openRelease(id){
         <!-- GitHub attaches these two to every release automatically. They are
              not in the assets array; they are generated from the tag. -->
         <button class="asset" id="as-zip">
-          <span class="g">⤓</span><span class="n">Source code (zip)</span><span class="s"></span>
+          <span class="g"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path fill="currentColor" d="M7.25 1.5v6.19L4.78 5.22 3.72 6.28 8 10.56l4.28-4.28-1.06-1.06-2.47 2.47V1.5zM3 12.25h10v1.5H3z"/></svg></span><span class="n">Source code (zip)</span><span class="s"></span>
         </button>
         <button class="asset" id="as-tar">
-          <span class="g">⤓</span><span class="n">Source code (tar.gz)</span><span class="s"></span>
+          <span class="g"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path fill="currentColor" d="M7.25 1.5v6.19L4.78 5.22 3.72 6.28 8 10.56l4.28-4.28-1.06-1.06-2.47 2.47V1.5zM3 12.25h10v1.5H3z"/></svg></span><span class="n">Source code (tar.gz)</span><span class="s"></span>
         </button>
       </div>`;
 
@@ -5264,9 +5319,9 @@ async function openGists(){
       const b = document.createElement('button');
       b.className = 'row gistrow';
       b.innerHTML = `
-        <span class="glyph">${g.public ? '{ }' : '🔒'}</span>
+        <span class="glyph">{ }</span>
         <span class="name">${esc(names[0] || 'gist')}</span>
-        <span class="meta">${names.length} file${names.length === 1 ? '' : 's'}</span>`;
+        <span class="meta">${names.length} file${names.length === 1 ? '' : 's'} · ${g.public ? 'public' : 'secret'}</span>`;
       b.onclick = () => openGist(g.id);
       v.appendChild(b);
     });
@@ -5338,17 +5393,26 @@ function newGistSheet(){
   });
 }
 
-/* ── In-file find ─────────────────────────────────────────────────────────*/
+/* ── In-file find / replace / go-to-line ──────────────────────────────────*/
 let FIND = { q:'', hits:[], idx:-1 };
 function toggleFind(){
   const bar = $('findbar');
   const on = bar.style.display === 'none';
   bar.style.display = on ? 'flex' : 'none';
+  $('replrow').style.display = (on && S.editing) ? 'flex' : 'none';   // replace needs edit mode
   if (on) { $('findq').value = FIND.q || ''; runFind(); $('findq').focus(); }
+}
+function edLineHeight(){
+  return parseInt(getComputedStyle($('editor')).lineHeight) || 20;
 }
 function runFind(){
   const q = $('findq').value;
   FIND.q = q; FIND.hits = [];
+
+  // ":42" jumps straight to a line rather than searching for text.
+  const jump = /^:(\d+)$/.exec(q);
+  if (jump) { gotoLine(parseInt(jump[1], 10)); $('findcount').textContent = 'ln'; return; }
+
   if (q) {
     const hay = (S.buffer || '').toLowerCase(), needle = q.toLowerCase();
     let i = hay.indexOf(needle);
@@ -5366,14 +5430,68 @@ function gotoHit(){
   ed.focus();
   ed.setSelectionRange(start, end);
   const linesBefore = (S.buffer.slice(0, start).match(/\n/g) || []).length;
-  ed.scrollTop = Math.max(0, linesBefore * 20 - ed.clientHeight / 2);
+  ed.scrollTop = Math.max(0, linesBefore * edLineHeight() - ed.clientHeight / 2);
   paintFind();
+}
+function gotoLine(n){
+  const ed = $('editor');
+  const lines = (S.buffer || '').split('\n');
+  const target = Math.max(1, Math.min(n, lines.length));
+  const start = lines.slice(0, target - 1).join('\n').length + (target > 1 ? 1 : 0);
+  const end = start + (lines[target - 1] ? lines[target - 1].length : 0);
+  ed.focus();
+  ed.setSelectionRange(start, end);
+  ed.scrollTop = Math.max(0, (target - 1) * edLineHeight() - ed.clientHeight / 2);
 }
 function findStep(d){
   if (!FIND.hits.length) return;
   FIND.idx = (FIND.idx + d + FIND.hits.length) % FIND.hits.length;
   gotoHit();
 }
+function replaceOne(){
+  if (!S.editing || FIND.idx < 0 || !FIND.hits.length) return;
+  const ed = $('editor');
+  const start = FIND.hits[FIND.idx], end = start + FIND.q.length;
+  const rep = $('replq').value;
+  ed.value = ed.value.slice(0, start) + rep + ed.value.slice(end);
+  ed.dispatchEvent(new Event('input'));           // sync buffer, highlight, draft
+  runFind();                                       // recompute remaining hits
+}
+function replaceAll(){
+  if (!S.editing || !FIND.q) return;
+  const ed = $('editor');
+  const rep = $('replq').value;
+  // Case-insensitive literal replace.
+  const re = new RegExp(FIND.q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+  const before = ed.value;
+  const after = before.replace(re, rep);
+  const count = (before.match(re) || []).length;
+  ed.value = after;
+  ed.dispatchEvent(new Event('input'));
+  runFind();
+  toast(count ? ('Replaced ' + count) : 'Nothing to replace');
+}
+
+/* ── Editor helpers: tab-to-indent, auto-indent on Enter ──────────────────*/
+function insertAtCursor(ed, text){
+  const s = ed.selectionStart, e = ed.selectionEnd;
+  ed.value = ed.value.slice(0, s) + text + ed.value.slice(e);
+  ed.selectionStart = ed.selectionEnd = s + text.length;
+  ed.dispatchEvent(new Event('input'));
+}
+$('editor').addEventListener('keydown', e => {
+  const ed = e.target;
+  if (ed.readOnly) return;
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    insertAtCursor(ed, '  ');                       // two spaces, not a focus jump
+  } else if (e.key === 'Enter') {
+    const pos = ed.selectionStart;
+    const lineStart = ed.value.lastIndexOf('\n', pos - 1) + 1;
+    const indent = (ed.value.slice(lineStart, pos).match(/^[ \t]*/) || [''])[0];
+    if (indent) { e.preventDefault(); insertAtCursor(ed, '\n' + indent); }   // keep indentation
+  }
+});
 
 /* ── Blame (GraphQL) ──────────────────────────────────────────────────────*/
 async function openBlame(){
@@ -5408,12 +5526,12 @@ async function openBlame(){
 /* Static wiring for the new surfaces. */
 $('go-notes').onclick  = openNotes;
 $('go-gists').onclick  = openGists;
-$('fi-find').onclick   = toggleFind;
-$('fi-blame').onclick  = openBlame;
 $('findq').addEventListener('input', runFind);
 $('findprev').onclick  = () => findStep(-1);
 $('findnext').onclick  = () => findStep(1);
 $('findclose').onclick = () => { $('findbar').style.display = 'none'; };
+$('replone').onclick   = replaceOne;
+$('replall').onclick   = replaceAll;
 $('findq').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); findStep(e.shiftKey ? -1 : 1); } });
 
 /* ── Delete a branch ─────────────────────────────────────────────────── */
@@ -6408,6 +6526,7 @@ $('gear').onclick = async () => {
         S.wrap ? 'On — long lines fold' : 'Off — long lines scroll sideways'
       }</small></button>
       <button id="s-lock">App lock<small>PIN-protect your token on this device</small></button>
+      <button id="s-editor">Editor<small>Font size and syntax theme</small></button>
       <button id="s-out">Sign out<small>Forgets the token on this device</small></button>
       <button id="s-about">About gitfile<small>Version, author, what this thing is</small></button>
     </div>
@@ -6423,7 +6542,7 @@ $('gear').onclick = async () => {
       const t = $('sheettitle');
       if (t) t.innerHTML = 'Settings <span style="font-weight:400; '
         + 'font-size:11px; color:var(--fg-subtle); font-family:var(--mono); '
-        + 'margin-left:8px">⇩ ' + n.toLocaleString()
+        + 'margin-left:8px">' + n.toLocaleString()
         + (n === 1 ? ' install' : ' installs') + '</span>';
     }).catch(() => {});
 
@@ -6436,6 +6555,7 @@ $('gear').onclick = async () => {
     };
     $('s-wrap').onclick = () => { closeSheet(); toggleWrap(); };
     $('s-lock').onclick  = () => { closeSheet(); lockSheet(); };
+    $('s-editor').onclick = () => { closeSheet(); editorSheet(); };
     $('s-out').onclick   = () => { closeSheet(); signOut(); };
     $('s-about').onclick = () => { closeSheet(); aboutSheet(); };
   });
@@ -6552,6 +6672,48 @@ function toggleWrap(){
   toast(on ? 'Word wrap on.' : 'Word wrap off.');
 }
 
+/* ── Editor appearance: font size + syntax theme ──────────────────────────*/
+const FONT_KEY = 'gitfile:font';
+const THEME_KEY = 'gitfile:theme';
+const THEMES = ['default', 'mono', 'aurora'];
+const THEME_NAMES = { default:'GitHub', mono:'Monochrome', aurora:'Aurora' };
+let ED_FONT = 12, ED_THEME = 'default';
+
+function applyFont(px){
+  ED_FONT = Math.max(10, Math.min(20, px));
+  document.documentElement.style.setProperty('--edfs', ED_FONT + 'px');
+  document.documentElement.style.setProperty('--edlh', (ED_FONT + 8) + 'px');
+}
+function applyTheme(name){
+  ED_THEME = THEMES.includes(name) ? name : 'default';
+  document.body.classList.remove('theme-mono', 'theme-aurora');
+  if (ED_THEME !== 'default') document.body.classList.add('theme-' + ED_THEME);
+}
+
+function editorSheet(){
+  sheet('Editor', `
+    <div class="overwrite" style="margin-top:0">Font size <b id="ed-fsval">${ED_FONT}px</b></div>
+    <div style="display:flex; gap:10px; margin:10px 0 18px">
+      <button class="btn wide" id="ed-fsdown">A −</button>
+      <button class="btn wide" id="ed-fsup">A +</button>
+    </div>
+    <div class="overwrite">Theme</div>
+    <div class="sheetlist" id="ed-themes">
+      ${THEMES.map(t => `<button data-t="${t}">${THEME_NAMES[t]}${t === ED_THEME ? ' ✓' : ''}</button>`).join('')}
+    </div>
+    <div style="height:6px"></div>
+    <button class="btn wide" onclick="closeSheet()">Close</button>
+  `, () => {
+    $('ed-fsdown').onclick = () => { applyFont(ED_FONT - 1); $('ed-fsval').textContent = ED_FONT + 'px'; store.set(FONT_KEY, String(ED_FONT)); };
+    $('ed-fsup').onclick   = () => { applyFont(ED_FONT + 1); $('ed-fsval').textContent = ED_FONT + 'px'; store.set(FONT_KEY, String(ED_FONT)); };
+    $('ed-themes').querySelectorAll('button').forEach(b => b.onclick = () => {
+      applyTheme(b.dataset.t);
+      store.set(THEME_KEY, ED_THEME);
+      editorSheet();     // repaint so the ✓ moves
+    });
+  });
+}
+
 /* ── App lock (PIN) ───────────────────────────────────────────────────────
    Set/change/remove the PIN that seals the token. Everything here needs the
    live token in memory (you're already signed in when you open Settings). */
@@ -6564,14 +6726,33 @@ async function lockSheet(){
 
   if (!locked) { setPinSheet(false); return; }
 
+  let al = '1';
+  try { const v = await store.get(AUTOLOCK_KEY); if (v !== null && v !== undefined && v !== '') al = String(v); } catch {}
+  const alOpts = [['0','Immediately'], ['1','After 1 min'], ['5','After 5 min'], ['-1','Never']];
+
   sheet('App lock', `
     <p class="hint" style="margin-top:0">A PIN is protecting your token on this device — it's encrypted and can't be read without the PIN.</p>
+
+    <div class="overwrite" style="margin-top:0">Auto-lock when backgrounded</div>
+    <div class="sheetlist" id="al-opts">
+      ${alOpts.map(([v, label]) => `<button data-v="${v}">${label}${v === al ? ' ✓' : ''}</button>`).join('')}
+    </div>
+
+    ${hasBiometric() ? `<button class="btn wide" id="lk-bio">Enable fingerprint unlock</button><div style="height:10px"></div>` : ''}
     <button class="btn wide" id="lk-change">Change PIN</button>
     <div style="height:10px"></div>
     <button class="btn wide danger" id="lk-remove">Remove PIN</button>
     <div style="height:10px"></div>
     <button class="btn wide" onclick="closeSheet()">Close</button>
   `, () => {
+    $('al-opts').querySelectorAll('button').forEach(b => b.onclick = async () => {
+      await store.set(AUTOLOCK_KEY, b.dataset.v);
+      lockSheet();     // repaint to move the ✓
+    });
+    if (hasBiometric()) $('lk-bio').onclick = () => {
+      try { window.Native.enableBiometric(S.token); toast('Fingerprint unlock enabled.'); }
+      catch { toast('Could not enable fingerprint.'); }
+    };
     $('lk-change').onclick = () => setPinSheet(true);
     $('lk-remove').onclick = removePinSheet;
   });
@@ -6681,6 +6862,9 @@ async function boot(){
 
   // Desktop preference is cosmetic — apply it, but never let it gate the view.
   try { applyDesktop((await store.get(DESKTOP_KEY)) === '1'); } catch {}
+  // Editor appearance preferences.
+  try { const f = await store.get(FONT_KEY);  if (f) applyFont(parseInt(f, 10)); } catch {}
+  try { const t = await store.get(THEME_KEY); if (t) applyTheme(t); } catch {}
   paintRef();
 
   // Hold the splash for a readable minimum so the logo isn't just a flash.
@@ -6739,6 +6923,8 @@ function enterApp(){
 }
 
 /* ── Lock screen ──────────────────────────────────────────────────────────*/
+const hasBiometric = () => !!(window.Native && typeof window.Native.biometricUnlock === 'function');
+
 function showLock(blob){
   S.lockBlob = blob;
   show('lock');
@@ -6746,6 +6932,9 @@ function showLock(blob){
   const pin = $('pin');
   if (pin) { pin.value = ''; setTimeout(() => pin.focus(), 120); }
   if ($('pinerr')) $('pinerr').textContent = '';
+  // Offer fingerprint only if the native side actually provides it.
+  const bio = $('pinbio');
+  if (bio) bio.style.display = hasBiometric() ? '' : 'none';
 }
 async function tryUnlock(){
   const pin = ($('pin').value || '').trim();
@@ -6767,6 +6956,36 @@ async function tryUnlock(){
 }
 $('pinunlock').onclick = tryUnlock;
 $('pin').addEventListener('keydown', e => { if (e.key === 'Enter') tryUnlock(); });
+
+/* Biometric unlock is done entirely on the native side (Android Keystore +
+   BiometricPrompt); the page just asks for it and receives the token back.
+   Native contract:
+     window.Native.biometricUnlock()  → prompt; on success call
+        window.onBiometricUnlock(token); on failure window.onBiometricFail(msg)
+     window.Native.enableBiometric(token) / disableBiometric() to manage it. */
+$('pinbio').onclick = () => { try { window.Native.biometricUnlock(); } catch {} };
+window.onBiometricUnlock = (token) => {
+  if (token) { S.token = token; S.lockBlob = null; enterApp(); }
+};
+window.onBiometricFail = (msg) => {
+  if ($('pinerr')) $('pinerr').textContent = msg || 'Fingerprint not recognised.';
+};
+
+/* ── Auto-lock: re-lock after the app has been in the background a while ───*/
+const AUTOLOCK_KEY = 'gitfile:autolock';   // minutes; -1 = never, 0 = immediately
+document.addEventListener('visibilitychange', async () => {
+  if (document.hidden) { S.hiddenAt = Date.now(); return; }
+  if (!S.token) return;                             // not signed in / already locked
+  let locked = false;
+  try { locked = !!(await store.get(LOCK_KEY)); } catch {}
+  if (!locked) return;                              // no PIN → nothing to re-lock
+  let min = 1;
+  try { const v = await store.get(AUTOLOCK_KEY); if (v !== null && v !== undefined && v !== '') min = parseInt(v, 10); } catch {}
+  if (min < 0) return;                              // "Never"
+  if (Date.now() - (S.hiddenAt || 0) >= min * 60000) {
+    try { const blob = await store.get(LOCK_KEY); S.token = null; showLock(blob); } catch {}
+  }
+});
 /* Keep the splash up for a readable minimum, however fast the token loads. */
 const SPLASH_MIN = 1500;
 function holdSplash(t0){
