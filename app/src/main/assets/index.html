@@ -331,6 +331,15 @@ input.masked.plain{ -webkit-text-security:none; letter-spacing:0; }
   padding:3px 9px; cursor:pointer;
 }
 #editstat .ficon:active{ background:var(--inset); color:var(--fg); }
+#editstat .ficon.edit{ border-color:var(--accent); color:var(--accent-em); }
+
+/* Draft-restore banner: the app was closed mid-edit and a local copy survived. */
+#draftbar{
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  background:rgba(210,153,34,.12); border:1px solid rgba(210,153,34,.4);
+  border-bottom:0; padding:10px 12px; font-size:13px; color:var(--fg);
+}
+#draftbar .btn{ padding:4px 10px; font-size:12px; }
 
 /* ── Editor: the highlight layer sits under a transparent textarea.
       Every metric below must match on both, or the text drifts. ── */
@@ -997,12 +1006,16 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
       <div id="editstat">
         <span id="stat-lines">0 lines</span>
         <span id="stat-bytes">0 B</span>
-        <span id="stat-state">clean</span>
+        <span id="stat-state">read-only</span>
         <span class="fspace"></span>
         <button class="ficon" id="fi-raw"  aria-label="Open raw file">Raw</button>
         <button class="ficon" id="fi-copy" aria-label="Copy file contents">⧉ Copy</button>
         <button class="ficon" id="fi-dl"   aria-label="Download file">⤓</button>
+        <button class="ficon edit" id="fi-edit" aria-label="Edit this file">✎ Edit</button>
       </div>
+
+      <!-- Shown only when a local draft from a previous, interrupted edit exists. -->
+      <div id="draftbar" style="display:none"></div>
 
       <!-- The textarea's own text is transparent; what you read is the <pre>
            behind it, syntax-highlighted. A textarea cannot colour its own
@@ -2457,19 +2470,23 @@ async function openFile(path){
     S.buffer = text;
 
     ed.value = text;
-    ed.readOnly = false;
+    ed.readOnly = true;          // files open read-only, like GitHub — the pencil unlocks them
+    S.editing = false;
     filePane('edit');
+    $('draftbar').style.display = 'none';
+    const fe = $('fi-edit'); if (fe) fe.style.display = '';
     paintPath();
     paintStats();
     paintHL(true);        // immediately on open, not after a debounce
     paintRef();
+    readBar();
 
-    setBar([
-      { label:'Back',   onClick:() => backToTree() },
-      { label:'File',   onClick:fileSheet },
-      { label:'Commit', onClick:commitSheet, solid:true, grow:true, id:'commitbtn' }
-    ]);
-    refreshCommitBtn();
+    // If the app was closed mid-edit last time, a local draft is waiting. Offer
+    // it rather than silently discarding the work — or silently overwriting it.
+    try {
+      const draft = await store.get(draftKey());
+      if (draft != null && draft !== text) showDraftBar(draft);
+    } catch { /* no draft, no problem */ }
 
   } catch (e) {
     S.file = null;
@@ -2598,8 +2615,124 @@ function renderSvg(text){
 }
 
 function backToTree(){
-  if (isDirty() && !confirm('Uncommitted changes will be lost. Leave anyway?')) return;
+  // Leaving with uncommitted edits should never silently lose them.
+  if (S.editing && isDirty()) { askOnLeave(); return; }
   loadTree(S.path);
+}
+
+/* ── Read mode ↔ Edit mode ────────────────────────────────────────────────
+   Files open read-only, exactly like GitHub. The pencil unlocks the editor
+   and swaps the bottom bar to Cancel / Commit. This mirrors GitHub's "Edit →
+   Cancel changes / Commit changes" flow. */
+function readBar(){
+  setBar([
+    { label:'Back', onClick:() => backToTree() },
+    { label:'File', onClick:fileSheet, solid:true, grow:true }
+  ]);
+}
+function editBar(){
+  setBar([
+    { label:'Cancel', onClick:cancelEdit },
+    { label:'File',   onClick:fileSheet },
+    { label:'Commit', onClick:commitSheet, solid:true, grow:true, id:'commitbtn' }
+  ]);
+  refreshCommitBtn();
+}
+
+function enterEdit(restore){
+  if (!S.file || S.file.binary) return;
+  S.editing = true;
+  const ed = $('editor');
+  ed.readOnly = false;
+  if (restore != null) {           // restoring a recovered draft
+    ed.value = restore; S.buffer = restore;
+  }
+  $('draftbar').style.display = 'none';
+  const fe = $('fi-edit'); if (fe) fe.style.display = 'none';
+  paintStats(); paintHL(true); paintRef();
+  editBar();
+  ed.focus();
+}
+
+async function cancelEdit(){
+  if (isDirty() && !confirm('Discard your changes to this file?')) return;
+  const ed = $('editor');
+  S.buffer = S.file.text;          // back to the committed content
+  ed.value = S.file.text;
+  ed.readOnly = true;
+  S.editing = false;
+  await clearDraft();
+  const fe = $('fi-edit'); if (fe) fe.style.display = '';
+  paintStats(); paintHL(true); paintRef();
+  readBar();
+}
+
+/* The three-way prompt when you try to leave with unsaved edits. */
+function askOnLeave(){
+  const name = S.file.path.split('/').pop();
+  sheet('Unsaved changes', `
+    <p class="hint" style="margin-top:0">You have uncommitted edits to <b>${esc(name)}</b>. Your draft is saved on this device either way.</p>
+    <button class="btn solid wide" id="lv-commit">Commit changes…</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" id="lv-discard">Discard changes</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Keep editing</button>
+  `, () => {
+    $('lv-commit').onclick = () => { closeSheet(); commitSheet(); };
+    $('lv-discard').onclick = async () => {
+      closeSheet();
+      await clearDraft();
+      S.buffer = S.file.text; S.editing = false;
+      loadTree(S.path);
+    };
+  });
+}
+
+/* ── Local drafts: survive the app being closed mid-edit ──────────────────
+   As you type, a copy is written to on-device storage (debounced), and flushed
+   immediately if the app goes to the background. Re-opening the file offers to
+   restore it. Committing or discarding clears it. */
+function draftKey(){
+  return 'gitfile:draft:' + S.repo.owner + '/' + S.repo.name + ':' + S.branch + ':' + (S.file ? S.file.path : '');
+}
+let draftTimer = null;
+function saveDraftSoon(){
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(() => {
+    if (S.editing && S.file && isDirty()) store.set(draftKey(), S.buffer).catch(() => {});
+  }, 700);
+}
+function flushDraft(){
+  if (S.editing && S.file && isDirty()) {
+    clearTimeout(draftTimer);
+    store.set(draftKey(), S.buffer).catch(() => {});
+  }
+}
+async function clearDraft(){ try { await store.del(draftKey()); } catch {} }
+
+function showDraftBar(draft){
+  const bar = $('draftbar');
+  bar.style.display = 'flex';
+  bar.innerHTML = `<span>You left unsaved edits here last time.</span>
+    <span class="fspace" style="margin-left:auto"></span>
+    <button class="btn small" id="draft-restore">Restore</button>
+    <button class="btn small" id="draft-discard">Discard</button>`;
+  $('draft-restore').onclick = () => enterEdit(draft);
+  $('draft-discard').onclick = async () => { bar.style.display = 'none'; await clearDraft(); };
+}
+
+// The app being sent to the background (home button, app switch) is the moment
+// most likely to precede it being killed — flush the draft right then.
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushDraft(); });
+window.addEventListener('pagehide', flushDraft);
+
+/* After a successful commit, drop back to read mode and clear the draft. */
+function commitCleanup(){
+  S.editing = false;
+  const ed = $('editor'); if (ed) ed.readOnly = true;
+  const fe = $('fi-edit'); if (fe) fe.style.display = '';
+  clearDraft();
+  readBar();
 }
 
 /* Keep the buffer, the stats, the dirty mark and the commit button in sync. */
@@ -2609,6 +2742,7 @@ $('editor').addEventListener('input', e => {
   paintHL();
   paintRef();
   refreshCommitBtn();
+  saveDraftSoon();          // keep a local copy in case the app is closed mid-edit
 });
 
 /* Tab should indent, not escape the field. */
@@ -2628,7 +2762,7 @@ function paintStats(){
   const loc   = v ? v.split('\n').filter(l => l.trim() !== '').length : 0;
   $('stat-lines').textContent = lines + ' lines (' + loc + ' loc)';
   $('stat-bytes').textContent = bytes(new TextEncoder().encode(v).length);
-  $('stat-state').textContent = isDirty() ? 'modified' : 'clean';
+  $('stat-state').textContent = !S.editing ? 'read-only' : (isDirty() ? 'modified' : 'clean');
 }
 
 /* ── File toolbar: Raw · Copy · Download ──────────────────────────────────
@@ -2650,6 +2784,8 @@ $('fi-copy').onclick = () => {
   else if (navigator.clipboard) navigator.clipboard.writeText(text);
   toast('Copied ' + fileBase());
 };
+
+$('fi-edit').onclick = () => enterEdit();
 
 $('fi-dl').onclick = () => {
   const name = fileBase();
@@ -2767,6 +2903,7 @@ async function doCommit(){
       closeSheet();
       paintPath(); paintStats(); paintRef(); refreshCommitBtn();
       toast('Moved · ' + c.sha.slice(0, 7));
+      commitCleanup();
       if (alsoRun) await runDefaultWorkflow();
 
     } else {
@@ -2785,6 +2922,7 @@ async function doCommit(){
         closeSheet();
         paintStats(); paintRef(); refreshCommitBtn();
         toast('Committed · ' + c.sha.slice(0, 7));
+        commitCleanup();
         if (alsoRun) await runDefaultWorkflow();
         return;
       }
@@ -2802,6 +2940,7 @@ async function doCommit(){
       closeSheet();
       paintStats(); paintRef(); refreshCommitBtn();
       toast('Committed · ' + res.commit.sha.slice(0, 7));
+      commitCleanup();
       if (alsoRun) await runDefaultWorkflow();
     }
   } catch (e) {
@@ -2819,6 +2958,7 @@ async function doCommit(){
       if (typeof paintPath === 'function') paintPath();
       paintStats(); paintRef(); refreshCommitBtn();
       toast('No connection — saved offline. It will commit when you are back online.', 6000);
+      commitCleanup();
     } else {
       toast(e.message, 6000);
     }
