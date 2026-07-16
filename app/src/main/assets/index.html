@@ -333,6 +333,34 @@ input.masked.plain{ -webkit-text-security:none; letter-spacing:0; }
 #editstat .ficon:active{ background:var(--inset); color:var(--fg); }
 #editstat .ficon.edit{ border-color:var(--accent); color:var(--accent-em); }
 
+/* Repos screen entry row */
+.reptop{ display:flex; gap:8px; margin:-4px 0 12px; }
+
+/* In-file find bar */
+#findbar{ display:flex; align-items:center; gap:6px; padding:8px 0 4px; }
+#findbar input{ flex:1; font-size:14px; }
+#findbar #findcount{ font-family:var(--mono); font-size:12px; color:var(--fg-muted); min-width:44px; text-align:center; }
+
+/* Notifications */
+.note{ display:flex; flex-direction:column; gap:3px; text-align:left; }
+.note .nrepo{ font-size:12px; color:var(--fg-muted); font-family:var(--mono); }
+.note .ntitle{ font-size:14px; color:var(--fg); }
+.note .nreason{ font-size:11px; color:var(--accent-em); text-transform:capitalize; }
+.note.unread .ntitle{ font-weight:600; }
+
+/* Gists */
+.gistrow .name{ font-family:var(--mono); font-size:13px; }
+.gistfile{ margin:14px 0; }
+.gistfile label{ display:block; font-family:var(--mono); font-size:12px; color:var(--fg-muted); margin-bottom:6px; }
+.gistfile textarea{ width:100%; min-height:160px; font-family:var(--mono); font-size:13px; }
+
+/* Blame */
+.blame{ font-family:var(--mono); font-size:12px; line-height:1.5; overflow-x:auto; }
+.blame .brow{ display:flex; gap:0; white-space:pre; }
+.blame .bwho{ flex:none; width:150px; color:var(--fg-muted); overflow:hidden; text-overflow:ellipsis; border-right:1px solid var(--border); padding-right:8px; }
+.blame .bsha{ color:var(--accent-em); }
+.blame .bline{ padding-left:10px; color:var(--fg); }
+
 /* Draft-restore banner: the app was closed mid-edit and a local copy survived. */
 #draftbar{
   display:flex; align-items:center; gap:10px; flex-wrap:wrap;
@@ -443,6 +471,14 @@ input.masked.plain{ -webkit-text-security:none; letter-spacing:0; }
 .boot{ min-height:80vh; display:flex; align-items:center; justify-content:center; }
 .bootlogo{ color:var(--fg); animation:bootpulse 1.4s ease-in-out infinite; }
 @keyframes bootpulse{ 0%,100%{ opacity:.55; } 50%{ opacity:1; } }
+
+/* App lock screen */
+.lockwrap{ min-height:80vh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:0 28px; }
+.lockwrap svg{ color:var(--fg-muted); }
+.lockttl{ font-size:16px; font-weight:600; color:var(--fg); }
+.lockwrap input{ width:100%; max-width:280px; text-align:center; letter-spacing:.3em; font-size:18px; }
+.lockwrap .btn{ max-width:280px; }
+.lockerr{ color:var(--red); font-size:13px; min-height:18px; }
 
 /* Sign-in Help sheet */
 .authhelp{ font-size:14px; line-height:1.5; color:var(--fg); }
@@ -948,6 +984,21 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
       </div>
     </section>
 
+    <!-- ── 0b. App lock ───────────────────────────────────────
+         Shown at launch when a PIN is set. Unlock decrypts the token. -->
+    <section class="view" id="v-lock">
+      <div class="lockwrap">
+        <svg viewBox="0 0 16 16" width="48" height="48" aria-hidden="true">
+          <path fill="currentColor" d="M8 1a3 3 0 0 0-3 3v2H4.5A1.5 1.5 0 0 0 3 7.5v6A1.5 1.5 0 0 0 4.5 15h7a1.5 1.5 0 0 0 1.5-1.5v-6A1.5 1.5 0 0 0 11.5 6H11V4a3 3 0 0 0-3-3zm2 5H6V4a2 2 0 1 1 4 0v2z"/>
+        </svg>
+        <div class="lockttl">gitfile is locked</div>
+        <input id="pin" type="password" inputmode="numeric" pattern="[0-9]*"
+               placeholder="Enter PIN" autocomplete="off" maxlength="12">
+        <button class="btn solid wide" id="pinunlock">Unlock</button>
+        <div id="pinerr" class="lockerr"></div>
+      </div>
+    </section>
+
     <!-- ── 1. Sign in ─────────────────────────────────────── -->
     <section class="view" id="v-auth">
       <h1>Sign in</h1>
@@ -982,6 +1033,10 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
     <!-- ── 2. Repositories ────────────────────────────────── -->
     <section class="view" id="v-repos">
       <h1>Repositories</h1>
+      <div class="reptop">
+        <button class="btn small" id="go-notes">🔔 Notifications</button>
+        <button class="btn small" id="go-gists">Gists</button>
+      </div>
       <div id="repolist"></div>
     </section>
 
@@ -1026,7 +1081,20 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
         <button class="ficon" id="fi-raw"  aria-label="Open raw file">Raw</button>
         <button class="ficon" id="fi-copy" aria-label="Copy file contents">⧉ Copy</button>
         <button class="ficon" id="fi-dl"   aria-label="Download file">⤓</button>
+        <button class="ficon" id="fi-find" aria-label="Find in file">🔍</button>
+        <button class="ficon" id="fi-blame" aria-label="Blame">Blame</button>
+        <button class="ficon" id="fi-diff" aria-label="View your changes" style="display:none">⇄ Diff</button>
         <button class="ficon edit" id="fi-edit" aria-label="Edit this file">✎ Edit</button>
+      </div>
+
+      <!-- In-file find bar, toggled by the 🔍 button. -->
+      <div id="findbar" style="display:none">
+        <input type="text" id="findq" placeholder="Find in file" autocomplete="off"
+               autocapitalize="off" autocorrect="off" spellcheck="false">
+        <span id="findcount">0/0</span>
+        <button class="ficon" id="findprev" aria-label="Previous">↑</button>
+        <button class="ficon" id="findnext" aria-label="Next">↓</button>
+        <button class="ficon" id="findclose" aria-label="Close">✕</button>
       </div>
 
       <!-- Shown only when a local draft from a previous, interrupted edit exists. -->
@@ -1064,6 +1132,11 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
     <section class="view" id="v-release"></section>
 
     <section class="view" id="v-prs"></section>
+
+    <section class="view" id="v-notes"></section>
+    <section class="view" id="v-gists"></section>
+    <section class="view" id="v-gist"></section>
+    <section class="view" id="v-blame"></section>
 
     <section class="view" id="v-issues"></section>
     <section class="view" id="v-issue"></section>
@@ -1161,6 +1234,37 @@ const store = {
 };
 
 const TOKEN_KEY = 'gitfile:token';
+const LOCK_KEY  = 'gitfile:lock';    // present ⇒ token is PIN-encrypted, app is locked
+
+/* ── App lock crypto ──────────────────────────────────────────────────────
+   When a PIN is set, the token is not stored in the clear: a key is derived
+   from the PIN with PBKDF2 and the token is sealed with AES-GCM. Without the
+   PIN the token can't be read, and a wrong PIN fails the GCM auth tag. Needs a
+   secure context (localhost/https), which the app runs in. */
+const _b64  = u8 => btoa(String.fromCharCode.apply(null, u8));
+const _ub64 = s  => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+
+async function _pinKey(pin, salt){
+  const base = await crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name:'PBKDF2', salt, iterations:150000, hash:'SHA-256' },
+    base, { name:'AES-GCM', length:256 }, false, ['encrypt','decrypt']);
+}
+async function sealToken(pin, token){
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv   = crypto.getRandomValues(new Uint8Array(12));
+  const key  = await _pinKey(pin, salt);
+  const ct   = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, key, new TextEncoder().encode(token));
+  return JSON.stringify({ v:1, salt:_b64(salt), iv:_b64(iv), ct:_b64(new Uint8Array(ct)) });
+}
+async function openToken(pin, blob){
+  const o   = typeof blob === 'string' ? JSON.parse(blob) : blob;
+  const key = await _pinKey(pin, _ub64(o.salt));
+  const pt  = await crypto.subtle.decrypt({ name:'AES-GCM', iv:_ub64(o.iv) }, key, _ub64(o.ct));
+  return new TextDecoder().decode(pt);
+}
+const hasCrypto = () => !!(window.crypto && crypto.subtle);
 
 
 /* ── 2. STATE ─────────────────────────────────────────────── */
@@ -1367,6 +1471,27 @@ const api = {
   prs:       (o, r)        => gh(`/repos/${o}/${r}/pulls?state=open&per_page=50`),
   mergePR:   (o, r, n, body) => gh(`/repos/${o}/${r}/pulls/${n}/merge`, { method:'PUT', body }),
 
+  // PR reviews: approve, request changes, or comment.
+  review:    (o, r, n, body) => gh(`/repos/${o}/${r}/pulls/${n}/reviews`, { method:'POST', body }),
+
+  // Notifications inbox.
+  notifications: ()          => gh('/notifications?per_page=50'),
+  markNotif:     (id)        => gh('/notifications/threads/' + id, { method:'PATCH' }),
+  markAllNotifs: ()          => gh('/notifications', { method:'PUT', body:{ read:true } }),
+
+  // Gists.
+  gists:     ()              => gh('/gists?per_page=50'),
+  gist:      (id)            => gh('/gists/' + id),
+  makeGist:  (body)          => gh('/gists', { method:'POST', body }),
+  patchGist: (id, body)      => gh('/gists/' + id, { method:'PATCH', body }),
+  delGist:   (id)            => gh('/gists/' + id, { method:'DELETE' }),
+
+  // Blame, via GraphQL — the REST API has no blame endpoint.
+  blame: (o, r, ref, path)   => gh('/graphql', { method:'POST', body:{
+    query:`query($o:String!,$r:String!,$ref:String!,$path:String!){repository(owner:$o,name:$r){object(expression:$ref){... on Commit{blame(path:$path){ranges{startingLine endingLine commit{abbreviatedOid author{name} committedDate}}}}}}}`,
+    variables:{ o, r, ref, path }
+  }}),
+
   /* History. `path` is optional — omit it for the whole branch. */
   commits:   (o, r, ref, path) =>
                gh(`/repos/${o}/${r}/commits?sha=${enc(ref)}&per_page=40`
@@ -1552,7 +1677,18 @@ window.appBack = () => {
 
     case 'profile':
     case 'allsearch':
+    case 'notes':
+    case 'gists':
       openRepos();
+      return true;
+
+    case 'gist':
+      openGists();
+      return true;
+
+    case 'blame':
+      if (S.file) { openFile(S.file.path); return true; }
+      loadTree(S.path);
       return true;
 
     case 'commit':
@@ -1755,12 +1891,14 @@ $('signin').onclick = async () => {
 
     if ($('remember').checked) {
       await store.set(TOKEN_KEY, t);
+      await store.del(LOCK_KEY);        // a fresh token replaces any old PIN lock
       // Read it straight back. If storage silently dropped it, say so now rather
       // than letting you discover it the next time you open the app.
       const back = await store.get(TOKEN_KEY);
       if (back !== t) toast('Signed in, but this device would not save the token. You will need to paste it again next time.', 6000);
     } else {
       await store.del(TOKEN_KEY);
+      await store.del(LOCK_KEY);
     }
 
     $('tok').value = '';
@@ -1793,6 +1931,7 @@ $('tok').addEventListener('keydown', e => { if (e.key === 'Enter') $('signin').c
 
 async function signOut(){
   await store.del(TOKEN_KEY);
+  await store.del(LOCK_KEY);          // turning off the account also turns off the lock
   Object.assign(S, { token:null, user:null, repo:null, branch:null, path:'', file:null, buffer:'' });
   paintRef();
   setBar(null);
@@ -2532,6 +2671,9 @@ async function openFile(path){
     filePane('edit');
     $('draftbar').style.display = 'none';
     const fe = $('fi-edit'); if (fe) fe.style.display = '';
+    const fd = $('fi-diff'); if (fd) fd.style.display = 'none';
+    $('findbar').style.display = 'none';
+    FIND = { q:'', hits:[], idx:-1 };
     paintPath();
     paintStats();
     paintHL(true);        // immediately on open, not after a debounce
@@ -2706,6 +2848,7 @@ function enterEdit(restore){
   }
   $('draftbar').style.display = 'none';
   const fe = $('fi-edit'); if (fe) fe.style.display = 'none';
+  const fd = $('fi-diff'); if (fd) fd.style.display = '';
   paintStats(); paintHL(true); paintRef();
   editBar();
   ed.focus();
@@ -2720,6 +2863,7 @@ async function cancelEdit(){
   S.editing = false;
   await clearDraft();
   const fe = $('fi-edit'); if (fe) fe.style.display = '';
+  const fd = $('fi-diff'); if (fd) fd.style.display = 'none';
   paintStats(); paintHL(true); paintRef();
   readBar();
 }
@@ -2788,9 +2932,27 @@ function commitCleanup(){
   S.editing = false;
   const ed = $('editor'); if (ed) ed.readOnly = true;
   const fe = $('fi-edit'); if (fe) fe.style.display = '';
+  const fd = $('fi-diff'); if (fd) fd.style.display = 'none';
   clearDraft();
   readBar();
 }
+
+/* Review the current uncommitted edits as a diff, without opening the commit
+   flow. Reuses diffLines and the diff styles the commit sheet already uses. */
+function showDiffSheet(){
+  if (!S.file) return;
+  if (!isDirty()) { toast('No changes yet.'); return; }
+  const d = diffLines(S.file.text, S.buffer);
+  sheet('Your changes', `
+    <div class="diffstat"><span class="a">+${d.added}</span> <span class="d">−${d.removed}</span> lines changed</div>
+    <div class="filediff"><div class="diff">${d.html}</div></div>
+    <div style="height:12px"></div>
+    <button class="btn solid wide" id="df-commit">Commit…</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Close</button>
+  `, () => { $('df-commit').onclick = () => { closeSheet(); commitSheet(); }; });
+}
+$('fi-diff').onclick = showDiffSheet;
 
 /* Keep the buffer, the stats, the dirty mark and the commit button in sync. */
 $('editor').addEventListener('input', e => {
@@ -4960,6 +5122,9 @@ function mergeSheet(pr){
     </div>
     <div class="sheetlist">
       <button id="p-open">View on GitHub<small>Diff, comments, checks</small></button>
+      <button id="p-approve">Approve<small>Submit an approving review</small></button>
+      <button id="p-request">Request changes<small>Block with required changes</small></button>
+      <button id="p-comment">Comment<small>Leave a review comment</small></button>
     </div>
     <button class="btn solid wide" id="p-merge">Merge</button>
     <div style="height:10px"></div>
@@ -4968,6 +5133,10 @@ function mergeSheet(pr){
     $('p-open').onclick = () => window.Native
       ? window.Native.openUrl(pr.html_url)
       : window.open(pr.html_url, '_blank');
+
+    $('p-approve').onclick = () => reviewSheet(pr, 'APPROVE');
+    $('p-request').onclick = () => reviewSheet(pr, 'REQUEST_CHANGES');
+    $('p-comment').onclick = () => reviewSheet(pr, 'COMMENT');
 
     $('p-merge').onclick = async () => {
       const btn = $('p-merge');
@@ -4989,6 +5158,263 @@ function mergeSheet(pr){
     };
   });
 }
+
+/* ── PR review ────────────────────────────────────────────────────────────*/
+function reviewSheet(pr, event){
+  const titles = { APPROVE:'Approve', REQUEST_CHANGES:'Request changes', COMMENT:'Comment' };
+  const needBody = event !== 'APPROVE';
+  sheet(titles[event] + ' · #' + pr.number, `
+    <div class="field">
+      <label for="rv-body">${needBody ? 'Comment (required)' : 'Comment (optional)'}</label>
+      <textarea id="rv-body" rows="4" placeholder="Markdown"></textarea>
+    </div>
+    <button class="btn solid wide" id="rv-go">${titles[event]}</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => {
+    $('rv-go').onclick = async () => {
+      const body = $('rv-body').value.trim();
+      if (needBody && !body) { toast('A comment is required for this.'); return; }
+      const btn = $('rv-go'); busy(btn, true, 'Submitting…');
+      try {
+        await api.review(S.repo.owner, S.repo.name, pr.number, { event, body: body || undefined });
+        closeSheet();
+        toast(titles[event] + ' submitted for #' + pr.number);
+      } catch (e) {
+        busy(btn, false);
+        toast(e.status === 422
+          ? 'GitHub rejected this — you can\'t review your own PR, or you already have a pending review.'
+          : e.message, 6000);
+      }
+    };
+  });
+}
+
+/* ── Notifications inbox ──────────────────────────────────────────────────*/
+function apiToHtml(u){
+  if (!u) return null;
+  return u.replace('https://api.github.com/repos/', 'https://github.com/')
+          .replace('/pulls/', '/pull/')
+          .replace('/commits/', '/commit/');
+}
+async function openNotes(){
+  show('notes');
+  const v = $('v-notes');
+  v.innerHTML = '<div class="empty">Loading…</div>';
+  setBar([
+    { label:'Back', onClick:openRepos },
+    { label:'Mark all read', solid:true, grow:true, onClick: async () => {
+        try { await api.markAllNotifs(); toast('All marked read'); openNotes(); }
+        catch (e) { toast(e.message, 5000); } } }
+  ]);
+  try {
+    const notes = await api.notifications();
+    if (!notes.length) { v.innerHTML = '<h1>Notifications</h1><div class="empty">You are all caught up.</div>'; return; }
+    v.innerHTML = '<h1>Notifications</h1>';
+    notes.forEach(n => {
+      const b = document.createElement('button');
+      b.className = 'row';
+      b.innerHTML = `<span class="note ${n.unread ? 'unread' : ''}">
+        <span class="nrepo">${esc(n.repository.full_name)}</span>
+        <span class="ntitle">${esc(n.subject.title)}</span>
+        <span class="nreason">${esc(String(n.reason).replace(/_/g, ' '))} · ${esc(n.subject.type)}</span>
+      </span>`;
+      b.onclick = () => noteSheet(n);
+      v.appendChild(b);
+    });
+  } catch (e) {
+    v.innerHTML = `<div class="empty">${esc(e.message)}<br><br>Your token may be missing the <b>Notifications</b> permission.</div>`;
+  }
+}
+function noteSheet(n){
+  sheet(n.subject.type, `
+    <div class="overwrite"><b>${esc(n.subject.title)}</b><br>${esc(n.repository.full_name)}</div>
+    <div class="sheetlist">
+      <button id="n-open">Open on GitHub</button>
+      <button id="n-read">Mark read</button>
+    </div>
+    <button class="btn wide" onclick="closeSheet()">Close</button>
+  `, () => {
+    $('n-open').onclick = () => {
+      const url = apiToHtml(n.subject.url) || n.repository.html_url;
+      window.Native ? window.Native.openUrl(url) : window.open(url, '_blank');
+    };
+    $('n-read').onclick = async () => {
+      try { await api.markNotif(n.id); closeSheet(); toast('Marked read'); openNotes(); }
+      catch (e) { toast(e.message, 5000); }
+    };
+  });
+}
+
+/* ── Gists ────────────────────────────────────────────────────────────────*/
+async function openGists(){
+  show('gists');
+  const v = $('v-gists');
+  v.innerHTML = '<div class="empty">Loading…</div>';
+  setBar([
+    { label:'Back', onClick:openRepos },
+    { label:'New gist', onClick:newGistSheet, solid:true, grow:true }
+  ]);
+  try {
+    const gists = await api.gists();
+    if (!gists.length) { v.innerHTML = '<h1>Gists</h1><div class="empty">No gists yet.</div>'; return; }
+    v.innerHTML = '<h1>Gists</h1>';
+    gists.forEach(g => {
+      const names = Object.keys(g.files);
+      const b = document.createElement('button');
+      b.className = 'row gistrow';
+      b.innerHTML = `
+        <span class="glyph">${g.public ? '{ }' : '🔒'}</span>
+        <span class="name">${esc(names[0] || 'gist')}</span>
+        <span class="meta">${names.length} file${names.length === 1 ? '' : 's'}</span>`;
+      b.onclick = () => openGist(g.id);
+      v.appendChild(b);
+    });
+  } catch (e) {
+    v.innerHTML = `<div class="empty">${esc(e.message)}<br><br>Your token may be missing the <b>Gists</b> permission.</div>`;
+  }
+}
+async function openGist(id){
+  show('gist');
+  const v = $('v-gist');
+  v.innerHTML = '<div class="empty">Loading…</div>';
+  setBar([{ label:'Back', onClick:openGists, solid:true }]);
+  try {
+    const g = await api.gist(id);
+    const files = Object.values(g.files);
+    v.innerHTML = `<h1>${esc(g.description || 'Gist')}</h1>` +
+      files.map((f, i) => `
+        <div class="gistfile">
+          <label>${esc(f.filename)}</label>
+          <textarea id="gf-${i}" spellcheck="false">${esc(f.content || '')}</textarea>
+        </div>`).join('') +
+      `<button class="btn solid wide" id="g-save">Save changes</button>
+       <div style="height:10px"></div>
+       <button class="btn wide danger" id="g-del">Delete gist</button>`;
+    $('g-save').onclick = async () => {
+      const patchFiles = {};
+      files.forEach((f, i) => { patchFiles[f.filename] = { content: $('gf-' + i).value }; });
+      const btn = $('g-save'); busy(btn, true, 'Saving…');
+      try { await api.patchGist(id, { files: patchFiles }); busy(btn, false); toast('Gist saved'); }
+      catch (e) { busy(btn, false); toast(e.message, 6000); }
+    };
+    $('g-del').onclick = async () => {
+      if (!confirm('Delete this gist?')) return;
+      try { await api.delGist(id); toast('Gist deleted'); openGists(); }
+      catch (e) { toast(e.message, 6000); }
+    };
+  } catch (e) {
+    v.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+function newGistSheet(){
+  sheet('New gist', `
+    <div class="field"><label for="ng-name">Filename</label>
+      <input type="text" id="ng-name" placeholder="snippet.txt" spellcheck="false"></div>
+    <div class="field"><label for="ng-desc">Description</label>
+      <input type="text" id="ng-desc" placeholder="Optional"></div>
+    <div class="field"><label for="ng-body">Content</label>
+      <textarea id="ng-body" rows="6" placeholder="…" spellcheck="false"></textarea></div>
+    <label class="check"><input type="checkbox" id="ng-public"><span class="box"></span> Public gist</label>
+    <div style="height:12px"></div>
+    <button class="btn solid wide" id="ng-go">Create gist</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => {
+    $('ng-go').onclick = async () => {
+      const name = $('ng-name').value.trim() || 'gistfile1.txt';
+      const body = $('ng-body').value;
+      if (!body) { toast('Add some content.'); return; }
+      const btn = $('ng-go'); busy(btn, true, 'Creating…');
+      try {
+        const g = await api.makeGist({
+          description: $('ng-desc').value.trim(),
+          public: $('ng-public').checked,
+          files: { [name]: { content: body } }
+        });
+        closeSheet(); toast('Gist created'); openGist(g.id);
+      } catch (e) { busy(btn, false); toast(e.message, 6000); }
+    };
+  });
+}
+
+/* ── In-file find ─────────────────────────────────────────────────────────*/
+let FIND = { q:'', hits:[], idx:-1 };
+function toggleFind(){
+  const bar = $('findbar');
+  const on = bar.style.display === 'none';
+  bar.style.display = on ? 'flex' : 'none';
+  if (on) { $('findq').value = FIND.q || ''; runFind(); $('findq').focus(); }
+}
+function runFind(){
+  const q = $('findq').value;
+  FIND.q = q; FIND.hits = [];
+  if (q) {
+    const hay = (S.buffer || '').toLowerCase(), needle = q.toLowerCase();
+    let i = hay.indexOf(needle);
+    while (i !== -1) { FIND.hits.push(i); i = hay.indexOf(needle, i + needle.length); }
+  }
+  FIND.idx = FIND.hits.length ? 0 : -1;
+  if (FIND.idx >= 0) gotoHit(); else paintFind();
+}
+function paintFind(){
+  $('findcount').textContent = FIND.hits.length ? (FIND.idx + 1) + '/' + FIND.hits.length : '0/0';
+}
+function gotoHit(){
+  const ed = $('editor');
+  const start = FIND.hits[FIND.idx], end = start + FIND.q.length;
+  ed.focus();
+  ed.setSelectionRange(start, end);
+  const linesBefore = (S.buffer.slice(0, start).match(/\n/g) || []).length;
+  ed.scrollTop = Math.max(0, linesBefore * 20 - ed.clientHeight / 2);
+  paintFind();
+}
+function findStep(d){
+  if (!FIND.hits.length) return;
+  FIND.idx = (FIND.idx + d + FIND.hits.length) % FIND.hits.length;
+  gotoHit();
+}
+
+/* ── Blame (GraphQL) ──────────────────────────────────────────────────────*/
+async function openBlame(){
+  if (!S.file) return;
+  show('blame');
+  const v = $('v-blame');
+  v.innerHTML = '<div class="empty">Loading blame…</div>';
+  setBar([{ label:'Back', onClick:() => openFile(S.file.path), solid:true }]);
+  try {
+    const res = await api.blame(S.repo.owner, S.repo.name, S.branch, S.file.path);
+    const obj = res && res.data && res.data.repository && res.data.repository.object;
+    const ranges = obj && obj.blame && obj.blame.ranges;
+    if (!ranges || !ranges.length) { v.innerHTML = '<div class="empty">No blame available for this file.</div>'; return; }
+
+    const byLine = [];
+    ranges.forEach(r => { for (let ln = r.startingLine; ln <= r.endingLine; ln++) byLine[ln] = r.commit; });
+
+    const lines = (S.file.text || '').split('\n');
+    const rows = lines.map((line, i) => {
+      const c = byLine[i + 1];
+      const who = c
+        ? `<span class="bsha">${esc(c.abbreviatedOid)}</span> ${esc((c.author && c.author.name) || '')}`
+        : '';
+      return `<div class="brow"><span class="bwho">${who}</span><span class="bline">${esc(line) || '&nbsp;'}</span></div>`;
+    }).join('');
+    v.innerHTML = `<h1>Blame · ${esc(S.file.path.split('/').pop())}</h1><div class="blame">${rows}</div>`;
+  } catch (e) {
+    v.innerHTML = `<div class="empty">${esc(e.message || 'Blame failed.')}</div>`;
+  }
+}
+
+/* Static wiring for the new surfaces. */
+$('go-notes').onclick  = openNotes;
+$('go-gists').onclick  = openGists;
+$('fi-find').onclick   = toggleFind;
+$('fi-blame').onclick  = openBlame;
+$('findq').addEventListener('input', runFind);
+$('findprev').onclick  = () => findStep(-1);
+$('findnext').onclick  = () => findStep(1);
+$('findclose').onclick = () => { $('findbar').style.display = 'none'; };
+$('findq').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); findStep(e.shiftKey ? -1 : 1); } });
 
 /* ── Delete a branch ─────────────────────────────────────────────────── */
 async function doDeleteBranch(){
@@ -5981,6 +6407,7 @@ $('gear').onclick = async () => {
       <button id="s-wrap">Word wrap<small>${
         S.wrap ? 'On — long lines fold' : 'Off — long lines scroll sideways'
       }</small></button>
+      <button id="s-lock">App lock<small>PIN-protect your token on this device</small></button>
       <button id="s-out">Sign out<small>Forgets the token on this device</small></button>
       <button id="s-about">About gitfile<small>Version, author, what this thing is</small></button>
     </div>
@@ -6008,6 +6435,7 @@ $('gear').onclick = async () => {
       toast(on ? 'Desktop view on. Pinch to zoom.' : 'Phone view.');
     };
     $('s-wrap').onclick = () => { closeSheet(); toggleWrap(); };
+    $('s-lock').onclick  = () => { closeSheet(); lockSheet(); };
     $('s-out').onclick   = () => { closeSheet(); signOut(); };
     $('s-about').onclick = () => { closeSheet(); aboutSheet(); };
   });
@@ -6124,6 +6552,87 @@ function toggleWrap(){
   toast(on ? 'Word wrap on.' : 'Word wrap off.');
 }
 
+/* ── App lock (PIN) ───────────────────────────────────────────────────────
+   Set/change/remove the PIN that seals the token. Everything here needs the
+   live token in memory (you're already signed in when you open Settings). */
+async function lockSheet(){
+  if (!S.token)     { toast('Sign in first.'); return; }
+  if (!hasCrypto()) { toast('App lock needs a secure context (localhost/https).', 6000); return; }
+
+  let locked = false;
+  try { locked = !!(await store.get(LOCK_KEY)); } catch {}
+
+  if (!locked) { setPinSheet(false); return; }
+
+  sheet('App lock', `
+    <p class="hint" style="margin-top:0">A PIN is protecting your token on this device — it's encrypted and can't be read without the PIN.</p>
+    <button class="btn wide" id="lk-change">Change PIN</button>
+    <div style="height:10px"></div>
+    <button class="btn wide danger" id="lk-remove">Remove PIN</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Close</button>
+  `, () => {
+    $('lk-change').onclick = () => setPinSheet(true);
+    $('lk-remove').onclick = removePinSheet;
+  });
+}
+
+function setPinSheet(isChange){
+  sheet(isChange ? 'Change PIN' : 'Set a PIN', `
+    <p class="hint" style="margin-top:0">Your token is sealed with this PIN (AES-GCM). Forget it and you simply sign in again with your token — nothing else is lost.</p>
+    <div class="field"><input id="lk-p1" type="password" inputmode="numeric" pattern="[0-9]*" placeholder="New PIN (4–12 digits)" maxlength="12" autocomplete="off"></div>
+    <div class="field"><input id="lk-p2" type="password" inputmode="numeric" pattern="[0-9]*" placeholder="Confirm PIN" maxlength="12" autocomplete="off"></div>
+    <button class="btn solid wide" id="lk-save">${isChange ? 'Change PIN' : 'Set PIN'}</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => {
+    $('lk-save').onclick = async () => {
+      const p1 = ($('lk-p1').value || '').trim(), p2 = ($('lk-p2').value || '').trim();
+      if (p1.length < 4) { toast('Use at least 4 digits.'); return; }
+      if (p1 !== p2)     { toast('The two PINs do not match.'); return; }
+      const btn = $('lk-save'); busy(btn, true, 'Saving…');
+      try {
+        const blob = await sealToken(p1, S.token);
+        await store.set(LOCK_KEY, blob);
+        await store.del(TOKEN_KEY);          // the plaintext token no longer lives on disk
+        busy(btn, false); closeSheet();
+        toast(isChange ? 'PIN changed.' : 'App lock on. You will need this PIN next launch.', 5000);
+      } catch {
+        busy(btn, false);
+        toast('Could not set the PIN.', 5000);
+      }
+    };
+  });
+}
+
+function removePinSheet(){
+  sheet('Remove PIN', `
+    <p class="hint" style="margin-top:0">Enter your current PIN to turn the lock off. Your token will then be stored unencrypted again.</p>
+    <div class="field"><input id="lk-cur" type="password" inputmode="numeric" pattern="[0-9]*" placeholder="Current PIN" maxlength="12" autocomplete="off"></div>
+    <button class="btn solid wide danger" id="lk-off">Remove PIN</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => {
+    $('lk-off').onclick = async () => {
+      const pin = ($('lk-cur').value || '').trim();
+      if (!pin) return;
+      const btn = $('lk-off'); busy(btn, true, 'Removing…');
+      try {
+        const blob  = await store.get(LOCK_KEY);
+        const token = await openToken(pin, blob);   // verifies the PIN by decrypting
+        await store.set(TOKEN_KEY, token);
+        await store.del(LOCK_KEY);
+        S.token = token;
+        busy(btn, false); closeSheet();
+        toast('App lock off.');
+      } catch {
+        busy(btn, false);
+        toast('Wrong PIN.', 4000);
+      }
+    };
+  });
+}
+
 function paintBackend(){
   const el = $('backend');
   if (!el) return;
@@ -6165,11 +6674,10 @@ async function boot(){
   const t0 = Date.now();
   paintBackend();
 
-  // Restore the token FIRST and decide the destination before any network call,
-  // so a signed-in user is routed straight past the sign-in screen. Nothing here
-  // is allowed to log the user out except GitHub actually rejecting the token.
-  let saved = null;
+  // Read what's stored: either a plaintext token, or a PIN-sealed lock blob.
+  let saved = null, lock = null;
   try { saved = await store.get(TOKEN_KEY); } catch {}
+  try { lock  = await store.get(LOCK_KEY);  } catch {}
 
   // Desktop preference is cosmetic — apply it, but never let it gate the view.
   try { applyDesktop((await store.get(DESKTOP_KEY)) === '1'); } catch {}
@@ -6178,52 +6686,87 @@ async function boot(){
   // Hold the splash for a readable minimum so the logo isn't just a flash.
   await holdSplash(t0);
 
+  // A PIN is set: show the lock screen. Unlocking decrypts the token, then enters.
+  if (lock) { showLock(lock); return; }
+
   if (!saved) { show('auth'); setBar(null); return; }
   S.token = saved;
+  enterApp();
+}
 
-  // Leave the splash for the repos list (with its own Loading… state) BEFORE the
-  // network round-trip, so the sign-in form is never shown to a signed-in user.
+/* Reveal the app once a live token is in hand — from a fresh boot or an unlock.
+   Leaves the splash for the repos list BEFORE the network round-trip, so the
+   sign-in form is never shown to a signed-in user. */
+function enterApp(){
   show('repos');
   const bootList = $('repolist');
   if (bootList) bootList.innerHTML = '<div class="empty">Loading…</div>';
 
-  // The offline queue flush must never crash boot; wrap it and ignore failures.
   paintQueueBadge();
   if (navigator.onLine) { try { flushQueue(true); } catch {} }
 
-  try {
-    S.user = await api.me();
-    paintRef();
-    await openRepos();
-  } catch (e) {
-    // ONLY forget the token when GitHub actually rejects it (401/403). A network
-    // blip, a timeout, or a 5xx must NOT log you out — that would sign you out
-    // every time you open the app offline or on a bad connection, which is the
-    // opposite of "keep me signed in".
-    if (e && (e.status === 401 || e.status === 403)) {
-      S.token = null;
-      await store.del(TOKEN_KEY);
-      if ($('tok')) $('tok').value = '';
-      paintTokCount();
-      show('auth');
-      toast('The saved token was rejected by GitHub. Sign in again.', 6000);
-    } else {
-      // Keep the token; we are just offline or GitHub hiccuped. Show the app and
-      // let the user retry — openRepos will work once the network is back.
+  (async () => {
+    try {
+      S.user = await api.me();
       paintRef();
-      show('repos');
-      $('v-repos').innerHTML = `
-        <div class="empty">
-          Could not reach GitHub just now.<br>
-          You are still signed in.
-          <div style="height:14px"></div>
-          <button class="btn solid" id="boot-retry">Retry</button>
-        </div>`;
-      const rb = document.getElementById('boot-retry');
-      if (rb) rb.onclick = () => openRepos().catch(() => toast('Still cannot reach GitHub.', 5000));
+      await openRepos();
+    } catch (e) {
+      // ONLY forget the token when GitHub actually rejects it (401/403). A network
+      // blip, a timeout, or a 5xx must NOT log you out — that would sign you out
+      // every time you open the app offline or on a bad connection.
+      if (e && (e.status === 401 || e.status === 403)) {
+        S.token = null;
+        await store.del(TOKEN_KEY);
+        if ($('tok')) $('tok').value = '';
+        paintTokCount();
+        show('auth');
+        toast('The saved token was rejected by GitHub. Sign in again.', 6000);
+      } else {
+        paintRef();
+        show('repos');
+        $('v-repos').innerHTML = `
+          <div class="empty">
+            Could not reach GitHub just now.<br>
+            You are still signed in.
+            <div style="height:14px"></div>
+            <button class="btn solid" id="boot-retry">Retry</button>
+          </div>`;
+        const rb = document.getElementById('boot-retry');
+        if (rb) rb.onclick = () => openRepos().catch(() => toast('Still cannot reach GitHub.', 5000));
+      }
     }
+  })();
+}
+
+/* ── Lock screen ──────────────────────────────────────────────────────────*/
+function showLock(blob){
+  S.lockBlob = blob;
+  show('lock');
+  setBar(null);
+  const pin = $('pin');
+  if (pin) { pin.value = ''; setTimeout(() => pin.focus(), 120); }
+  if ($('pinerr')) $('pinerr').textContent = '';
+}
+async function tryUnlock(){
+  const pin = ($('pin').value || '').trim();
+  if (!pin) return;
+  const btn = $('pinunlock');
+  busy(btn, true, 'Unlocking…');
+  try {
+    const token = await openToken(pin, S.lockBlob);   // throws on a wrong PIN
+    S.token = token;
+    S.lockBlob = null;
+    busy(btn, false);
+    enterApp();
+  } catch {
+    busy(btn, false);
+    $('pinerr').textContent = 'Wrong PIN.';
+    $('pin').value = '';
+    $('pin').focus();
   }
 }
+$('pinunlock').onclick = tryUnlock;
+$('pin').addEventListener('keydown', e => { if (e.key === 'Enter') tryUnlock(); });
 /* Keep the splash up for a readable minimum, however fast the token loads. */
 const SPLASH_MIN = 1500;
 function holdSplash(t0){
