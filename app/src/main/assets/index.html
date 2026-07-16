@@ -423,6 +423,38 @@ input.masked.plain{ -webkit-text-security:none; letter-spacing:0; }
 .md th,.md td{ border:1px solid var(--border); padding:6px 13px; }
 .md tr:nth-child(2n){ background:var(--inset); }
 
+/* ══ Repo About panel — mirrors GitHub's sidebar, stacked for mobile ══ */
+.about{ border:1px solid var(--border); border-radius:var(--r); margin-top:16px; }
+.about .rhead{
+  display:flex; align-items:center; gap:8px;
+  padding:12px 16px; border-bottom:1px solid var(--border);
+  font-size:13px; font-weight:600; color:var(--fg);
+}
+.abbody{ padding:16px; display:flex; flex-direction:column; gap:12px; font-size:14px; }
+.abbody .desc{ line-height:1.5; }
+.abbody .muted, .abbody .desc.muted{ color:var(--fg-muted); }
+.ablink{ font-size:13px; word-break:break-all; }
+.topics{ display:flex; flex-wrap:wrap; gap:6px; }
+.topic{ background:rgba(56,139,253,.15); color:var(--accent-em);
+  border-radius:2em; padding:3px 10px; font-size:12px; }
+.abstats{ display:flex; flex-wrap:wrap; gap:8px 18px; color:var(--fg-muted); font-size:13px; }
+.abstat b{ color:var(--fg); font-weight:600; }
+.abmeta{ display:flex; flex-direction:column; gap:6px; color:var(--fg-muted); font-size:13px; }
+.absec{ font-size:13px; font-weight:600; color:var(--fg); margin-top:4px; }
+.langbar{ display:flex; height:8px; border-radius:6px; overflow:hidden; background:var(--subtle); }
+.langseg{ height:100%; }
+.langlegend{ display:flex; flex-wrap:wrap; gap:6px 14px; font-size:12px; color:var(--fg-muted); }
+.langitem{ display:flex; align-items:center; gap:5px; }
+.langitem i{ width:9px; height:9px; border-radius:50%; display:inline-block; flex:none; }
+.langitem b{ color:var(--fg-muted); font-weight:400; }
+.abrelease{ display:flex; align-items:center; gap:10px; background:none; border:0; padding:0; font:inherit; text-align:left; }
+.abrelease .tag{ background:rgba(63,185,80,.15); color:var(--green-fg);
+  border:1px solid rgba(63,185,80,.3); border-radius:2em; padding:2px 10px;
+  font-size:12px; font-family:var(--mono); flex:none; }
+.abrelease .rl{ color:var(--fg-muted); font-size:12px; }
+.contribs{ display:flex; flex-wrap:wrap; gap:6px; }
+.contrib{ width:34px; height:34px; border-radius:50%; border:1px solid var(--border); background:var(--subtle); }
+
 /* ══ Image preview ═══════════════════════════════════════════ */
 .csvwrap{ overflow-x:auto; border:1px solid var(--border); border-radius:var(--r); }
 table.csv{ border-collapse:collapse; font-size:12px; font-family:var(--mono); width:100%; }
@@ -926,6 +958,7 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
       </div>
 
       <div id="readme"></div>
+      <div id="about"></div>
     </section>
 
     <!-- ── 4. File editor ─────────────────────────────────── -->
@@ -1213,6 +1246,12 @@ const api = {
   repos:     ()               => gh('/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member'),
 
   branches:  (o, r)           => gh(`/repos/${o}/${r}/branches?per_page=100`),
+
+  // The About panel: full repo object, language byte-counts, and the top
+  // contributors. Each is a small call, fanned out together.
+  repoInfo:     (o, r)        => gh(`/repos/${o}/${r}`),
+  languages:    (o, r)        => gh(`/repos/${o}/${r}/languages`),
+  contributors: (o, r)        => gh(`/repos/${o}/${r}/contributors?per_page=24`),
 
   /* Returns an array for a directory, an object for a file.
      The file object carries `sha` — hold on to it, the commit needs it. */
@@ -2093,6 +2132,8 @@ function renderTree(items){
     });
     paintCommitBar();
     paintReadme(items);
+    if (!S.path) paintAbout();           // GitHub shows the About sidebar only at repo root
+    else $('about').innerHTML = '';
   }
 }
 
@@ -2137,6 +2178,112 @@ async function paintReadme(items){
         <div class="md">${markdown(b64decode(f.content))}</div>
       </div>`;
   } catch { /* a README that won't load is not worth an error */ }
+}
+
+/* ── About: everything GitHub shows in the repo sidebar ───────────────────
+   Description, topics, homepage, the star / watch / fork counts, licence,
+   a proportional languages bar, the latest release and the contributors.
+   One small fan-out of API calls, cached per repo for the session so walking
+   in and out of folders never refetches. Painted only at the repo root. */
+const LANG_COLORS = {
+  JavaScript:'#f1e05a', TypeScript:'#3178c6', HTML:'#e34c26', CSS:'#563d7c',
+  Python:'#3572A5', Java:'#b07219', Kotlin:'#A97BFF', C:'#555555', 'C++':'#f34b7d',
+  'C#':'#178600', Go:'#00ADD8', Rust:'#dea584', Ruby:'#701516', PHP:'#4F5D95',
+  Swift:'#F05138', Shell:'#89e051', Dart:'#00B4AB', Vue:'#41b883', SCSS:'#c6538c',
+  'Objective-C':'#438eff', Makefile:'#427819', Dockerfile:'#384d54', Lua:'#000080',
+  'Jupyter Notebook':'#DA5B0B', Markdown:'#083fa1'
+};
+const langColor = n => LANG_COLORS[n] || '#8b949e';
+
+let ABOUT = { key: null, html: null };   // one-slot session cache
+
+async function paintAbout(){
+  const box = $('about');
+  if (!box) return;
+  const key = S.repo.owner + '/' + S.repo.name;
+
+  // Reuse this session's render if we already built it for this repo.
+  if (ABOUT.key === key && ABOUT.html) { box.innerHTML = ABOUT.html; wireAbout(); return; }
+  box.innerHTML = '<div class="about"><div class="rhead">About</div>'
+                + '<div class="abbody"><span class="muted">Loading…</span></div></div>';
+
+  // Fan out. Any one call failing just drops its own section.
+  const [info, langs, contribs, rels] = await Promise.all([
+    api.repoInfo(S.repo.owner, S.repo.name).catch(() => S.repo || {}),
+    api.languages(S.repo.owner, S.repo.name).catch(() => ({})),
+    api.contributors(S.repo.owner, S.repo.name).catch(() => []),
+    api.releases(S.repo.owner, S.repo.name).catch(() => [])
+  ]);
+
+  const num = n => (n || 0).toLocaleString();
+  const total = Object.values(langs).reduce((a, b) => a + b, 0);
+  const langRows = Object.entries(langs)
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, n]) => ({ name, pct: total ? (n / total) * 100 : 0 }));
+
+  const topics = info.topics || [];
+  const lic = info.license && info.license.spdx_id && info.license.spdx_id !== 'NOASSERTION'
+    ? info.license.spdx_id
+    : (info.license && info.license.name) || null;
+  const latest = (Array.isArray(rels) ? rels : []).find(r => !r.draft && !r.prerelease)
+              || (Array.isArray(rels) ? rels[0] : null);
+  const relCount = Array.isArray(rels) ? rels.length : 0;
+  const avatar = c => c.avatar_url + (c.avatar_url.includes('?') ? '&' : '?') + 's=64';
+
+  const html = `
+    <div class="about">
+      <div class="rhead">About</div>
+      <div class="abbody">
+        ${info.description ? `<div class="desc">${esc(info.description)}</div>`
+                           : `<div class="desc muted">No description, website, or topics provided.</div>`}
+        ${info.homepage ? `<a class="ablink" href="${esc(info.homepage)}" target="_blank" rel="noopener">🔗 ${esc(info.homepage)}</a>` : ''}
+        ${topics.length ? `<div class="topics">${topics.map(t => `<span class="topic">${esc(t)}</span>`).join('')}</div>` : ''}
+
+        <div class="abstats">
+          <span><b>${num(info.stargazers_count)}</b> ★ stars</span>
+          <span><b>${num(info.subscribers_count)}</b> 👁 watching</span>
+          <span><b>${num(info.forks_count)}</b> ⑂ forks</span>
+        </div>
+
+        <div class="abmeta">
+          ${lic ? `<div>⚖ ${esc(lic)} license</div>` : ''}
+          <div>● ${num(info.open_issues_count)} open issue${info.open_issues_count === 1 ? '' : 's'} & PRs</div>
+          <div>◷ Updated ${info.pushed_at ? ago(info.pushed_at) + ' ago' : '—'}</div>
+        </div>
+
+        ${langRows.length ? `
+          <div class="absec">Languages</div>
+          <div class="langbar">${langRows.map(l =>
+            `<span class="langseg" style="width:${l.pct}%;background:${langColor(l.name)}"></span>`).join('')}</div>
+          <div class="langlegend">${langRows.map(l =>
+            `<span class="langitem"><i style="background:${langColor(l.name)}"></i>${esc(l.name)} <b>${l.pct.toFixed(1)}%</b></span>`).join('')}</div>`
+          : ''}
+
+        <div class="absec">Releases</div>
+        ${latest
+          ? `<button class="abrelease" id="ab-rel">
+               <span class="tag">${esc(latest.tag_name)}</span>
+               <span class="rl">${relCount} release${relCount === 1 ? '' : 's'}${latest.published_at ? ' · latest ' + ago(latest.published_at) + ' ago' : ''}</span>
+             </button>`
+          : `<div class="muted">No releases published.</div>`}
+
+        ${Array.isArray(contribs) && contribs.length ? `
+          <div class="absec">Contributors · ${contribs.length}</div>
+          <div class="contribs">${contribs.slice(0, 24).map(c =>
+            `<img class="contrib" src="${esc(avatar(c))}" alt="${esc(c.login)}" title="${esc(c.login)}" loading="lazy">`).join('')}</div>`
+          : ''}
+      </div>
+    </div>`;
+
+  ABOUT = { key, html };
+  box.innerHTML = html;
+  wireAbout();
+}
+
+/* The one interactive element in the panel: the release row opens Releases. */
+function wireAbout(){
+  const rel = $('ab-rel');
+  if (rel) rel.onclick = openReleases;
 }
 
 function paintCrumbs(){
