@@ -339,6 +339,12 @@ input.masked.plain{ -webkit-text-security:none; letter-spacing:0; }
 .reptop{ display:flex; gap:8px; margin:-4px 0 12px; }
 .glyph .gi{ vertical-align:-2px; }
 
+/* Token manager rows (profile) */
+.trow{ display:flex; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid var(--border); font-size:13px; }
+.trow:last-of-type{ border-bottom:0; }
+.trow .tk{ color:var(--fg-muted); flex:none; }
+.trow .tv{ color:var(--fg); text-align:right; word-break:break-word; font-family:var(--mono); font-size:12px; }
+
 /* In-file find bar */
 #findbar{ padding:8px 0 4px; display:flex; flex-direction:column; gap:6px; }
 #findbar .findrow{ display:flex; align-items:center; gap:6px; }
@@ -1380,6 +1386,9 @@ async function gh(path, opts = {}){
   // GitHub reports your remaining hourly budget on every response.
   const left = res.headers.get('x-ratelimit-remaining');
   if (left !== null) { S.quota = left; paintQuota(); }
+  // Classic tokens report their scopes here; fine-grained tokens leave it empty.
+  const scopes = res.headers.get('x-oauth-scopes');
+  if (scopes !== null) S.scopes = scopes;
 
   if (res.status === 204) return null;              // e.g. empty delete
 
@@ -2170,6 +2179,19 @@ async function openProfile(){
         <button class="btn wide" id="p-stars">Manage starred repositories</button>
       </div>
 
+      <div class="setgroup">
+        <h2>Token</h2>
+        <div class="trow"><span class="tk">Type</span><span class="tv" id="tk-type">—</span></div>
+        <div class="trow"><span class="tk">Access</span><span class="tv" id="tk-scope">—</span></div>
+        <div class="trow"><span class="tk">Rate limit</span><span class="tv" id="tk-rate">—</span></div>
+        <div style="height:14px"></div>
+        <button class="btn wide" id="tk-manage">Manage on GitHub</button>
+        <div style="height:10px"></div>
+        <button class="btn wide" id="tk-replace">Replace token</button>
+        <div style="height:10px"></div>
+        <button class="btn wide danger" id="tk-out">Sign out</button>
+      </div>
+
       <p class="hint" style="margin-top:8px">
         The contribution graph, followers, achievements and pinned repositories
         have no edit API — GitHub does not let any app change them. They are not
@@ -2202,9 +2224,68 @@ async function openProfile(){
 
     $('p-stars').onclick = starsSheet;
 
+    // Token section.
+    const tkn = S.token || '';
+    const fine = tkn.startsWith('github_pat_');
+    const kind = fine ? 'Fine-grained' : tkn.startsWith('ghp_') ? 'Classic' : 'Token';
+    $('tk-type').textContent  = kind + (tkn ? ' · ends …' + tkn.slice(-4) : '');
+    $('tk-scope').textContent = fine
+      ? 'Permissions managed on GitHub'
+      : (S.scopes ? S.scopes : 'classic token');
+    $('tk-rate').textContent  = S.quota !== null ? S.quota + ' requests left this hour' : '—';
+
+    $('tk-manage').onclick = () => {
+      // Fine-grained and classic live on different settings pages.
+      const url = tkn.startsWith('ghp_')
+        ? 'https://github.com/settings/tokens'
+        : 'https://github.com/settings/tokens?type=beta';
+      window.Native ? window.Native.openUrl(url) : window.open(url, '_blank');
+    };
+    $('tk-replace').onclick = replaceTokenSheet;
+    $('tk-out').onclick     = signOut;
+
   } catch (e) {
     v.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
   }
+}
+
+/* Swap the signed-in token for a new one — checked before it replaces the old
+   one, so a bad paste can't lock you out. A new token clears any PIN lock. */
+function replaceTokenSheet(){
+  sheet('Replace token', `
+    <p class="hint" style="margin-top:0">Paste a new GitHub token. It's verified before it replaces the current one.</p>
+    <div class="field">
+      <input type="text" id="rt-tok" placeholder="github_pat_… or ghp_…"
+             autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    </div>
+    <label class="check"><input type="checkbox" id="rt-remember" checked><span class="box"></span> Keep me signed in on this device</label>
+    <div style="height:12px"></div>
+    <button class="btn solid wide" id="rt-go">Replace</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => {
+    $('rt-go').onclick = async () => {
+      const t = $('rt-tok').value.replace(/\s+/g, '');
+      if (!t) { toast('Paste a token first.'); return; }
+      const btn = $('rt-go'); busy(btn, true, 'Checking…');
+      const prev = S.token;
+      S.token = t;                                   // try the new token
+      try {
+        const me = await api.me();                   // validates it
+        if ($('rt-remember').checked) { await store.set(TOKEN_KEY, t); }
+        else { await store.del(TOKEN_KEY); }
+        await store.del(LOCK_KEY);                    // a new token resets any PIN lock
+        S.user = me; S.me = me;
+        busy(btn, false); closeSheet();
+        toast('Token replaced');
+        openProfile();
+      } catch (e) {
+        S.token = prev;                              // revert on failure — stay signed in
+        busy(btn, false);
+        toast(e.status === 401 ? 'That token was rejected by GitHub.' : e.message, 6000);
+      }
+    };
+  });
 }
 
 async function starsSheet(){
@@ -3234,7 +3315,14 @@ async function doCommit(){
       toast('No connection — saved offline. It will commit when you are back online.', 6000);
       commitCleanup();
     } else {
-      toast(e.message, 6000);
+      // GitHub blocks committing to .github/workflows/* unless the token carries
+      // the Workflows permission — its own error is cryptic, so say it plainly.
+      const isWorkflow = /(^|\/)\.github\/workflows\//.test(moved ? newPath : S.file.path);
+      if (isWorkflow && e.status === 403) {
+        toast('This is a GitHub Actions workflow file. Your token needs the Workflows permission (Read and write) to commit it.', 8000);
+      } else {
+        toast(e.message, 6000);
+      }
     }
   } finally {
     busy(btn, false);
