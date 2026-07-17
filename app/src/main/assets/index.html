@@ -106,7 +106,9 @@ a:hover{ text-decoration:underline; }
 #gear{
   background:none; border:0; padding:4px 0 4px 10px;
   color:var(--fg-muted); font-size:15px; line-height:1; cursor:pointer; flex:none;
+  display:flex; align-items:center;
 }
+#gear svg, .mark svg{ display:block; }
 #gear:hover{ color:var(--fg); }
 
 /* ── Tabs. The active one carries GitHub's orange underline. ── */
@@ -345,8 +347,22 @@ input.masked.plain{ -webkit-text-security:none; letter-spacing:0; }
 .trow .tk{ color:var(--fg-muted); flex:none; }
 .trow .tv{ color:var(--fg); text-align:right; word-break:break-word; font-family:var(--mono); font-size:12px; }
 
+/* Repos home: pin toggle, section headers, row icon alignment */
+.rowpin{ background:none; border:0; color:var(--fg-subtle); cursor:pointer; padding:0 8px; display:flex; align-items:center; flex:none; }
+.rowpin.on{ color:#e3b341; }
+.rowpin:active{ color:var(--fg); }
+.rowmenu svg, .rowpin svg{ display:block; }
+.listhead{ font-size:11px; font-weight:600; color:var(--fg-muted); text-transform:uppercase; letter-spacing:.05em; margin:16px 0 6px; padding:0 2px; }
+.listhead:first-child{ margin-top:2px; }
+
 /* Commit CI status mark in the commit bar */
 .cistate{ font-family:var(--mono); font-weight:700; flex:none; }
+
+/* Tappable diff lines (PR line comments) and blame rows */
+.cline{ cursor:pointer; }
+.cline:active{ box-shadow:inset 2px 0 0 var(--accent); }
+.blame .bwho{ cursor:pointer; }
+.blame .bwho:active{ color:var(--accent-em); }
 
 /* In-file find bar */
 #findbar{ padding:8px 0 4px; display:flex; flex-direction:column; gap:6px; }
@@ -988,12 +1004,12 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
   <!-- ── SIGNATURE ELEMENT: the ref line ───────────────────── -->
   <div id="refline">
     <div class="hdr">
-      <span class="mark">⌥</span>
+      <span class="mark"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M4.5 2.5a1.6 1.6 0 0 0-.6 3.08v4.84a1.6 1.6 0 1 0 1.2 0V8.4c.35.25.8.4 1.3.45 1.7.18 2.2.66 2.2 1.9v.22a1.6 1.6 0 1 0 1.2 0v-.22c0-2.1-1.35-2.9-3.28-3.1-.9-.1-1.34-.42-1.34-1.06V5.58A1.6 1.6 0 0 0 4.5 2.5z"/></svg></span>
       <div class="coord" id="coord"><span class="dim">not signed in</span></div>
       <span id="dirty">●</span>
       <span id="quota"></span>
       <button id="queuebadge" style="display:none" aria-label="Sync queued changes"></button>
-      <button id="gear" aria-label="Settings">⚙</button>
+      <button id="gear" aria-label="Settings"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 5.6a2.4 2.4 0 1 0 0 4.8 2.4 2.4 0 0 0 0-4.8zm5.9 3.1l1.1.9a.4.4 0 0 1 .1.5l-1 1.7a.4.4 0 0 1-.5.2l-1.4-.5a4.6 4.6 0 0 1-1 .6l-.2 1.5a.4.4 0 0 1-.4.3H8.3a.4.4 0 0 1-.4-.3l-.2-1.5a4.6 4.6 0 0 1-1-.6l-1.4.5a.4.4 0 0 1-.5-.2l-1-1.7a.4.4 0 0 1 .1-.5l1.1-.9a4.7 4.7 0 0 1 0-1.4l-1.1-.9a.4.4 0 0 1-.1-.5l1-1.7a.4.4 0 0 1 .5-.2l1.4.5a4.6 4.6 0 0 1 1-.6l.2-1.5a.4.4 0 0 1 .4-.3h1.9a.4.4 0 0 1 .4.3l.2 1.5c.36.15.7.35 1 .6l1.4-.5a.4.4 0 0 1 .5.2l1 1.7a.4.4 0 0 1-.1.5l-1.1.9a4.7 4.7 0 0 1 0 1.4z"/></svg></button>
     </div>
     <div class="tabs" id="tabs"></div>
   </div>
@@ -1119,7 +1135,7 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
           <span id="findcount">0/0</span>
           <button class="ficon" id="findprev" aria-label="Previous">↑</button>
           <button class="ficon" id="findnext" aria-label="Next">↓</button>
-          <button class="ficon" id="findclose" aria-label="Close">✕</button>
+          <button class="ficon" id="findclose" aria-label="Close">×</button>
         </div>
         <div class="findrow" id="replrow" style="display:none">
           <input type="text" id="replq" placeholder="Replace with" autocomplete="off"
@@ -1166,6 +1182,7 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
     <section class="view" id="v-prs"></section>
 
     <section class="view" id="v-notes"></section>
+    <section class="view" id="v-prfiles"></section>
     <section class="view" id="v-gists"></section>
     <section class="view" id="v-gist"></section>
     <section class="view" id="v-blame"></section>
@@ -1504,6 +1521,8 @@ const api = {
 
   makePR:    (o, r, body)  => gh(`/repos/${o}/${r}/pulls`, { method:'POST', body }),
   prs:       (o, r)        => gh(`/repos/${o}/${r}/pulls?state=open&per_page=50`),
+  prFiles:   (o, r, n)     => gh(`/repos/${o}/${r}/pulls/${n}/files?per_page=100`),
+  reviewComment: (o, r, n, body) => gh(`/repos/${o}/${r}/pulls/${n}/comments`, { method:'POST', body }),
   mergePR:   (o, r, n, body) => gh(`/repos/${o}/${r}/pulls/${n}/merge`, { method:'PUT', body }),
 
   // PR reviews: approve, request changes, or comment.
@@ -1593,6 +1612,10 @@ const api = {
   // GitHub Pages.
   pages:      (o, r)       => gh(`/repos/${o}/${r}/pages`),
   buildPages: (o, r)       => gh(`/repos/${o}/${r}/pages/builds`, { method:'POST' }),
+
+  // Traffic (needs push access).
+  trafficViews:  (o, r)    => gh(`/repos/${o}/${r}/traffic/views`),
+  trafficClones: (o, r)    => gh(`/repos/${o}/${r}/traffic/clones`),
 
   /* Fire a workflow_dispatch. Needs the token's Actions permission at read AND
      write — read-only is enough to watch runs, not to start one. Returns 204,
@@ -1769,6 +1792,10 @@ window.appBack = () => {
     case 'releases':
     case 'issues':
       loadTree(S.path);
+      return true;
+
+    case 'prfiles':
+      openPRs();
       return true;
 
     case 'tree':
@@ -2009,6 +2036,50 @@ async function signOut(){
 
 
 /* --- 6b. Repositories --------------------------------------- */
+/* ── Recent repos, favorites, and an offline read cache ───────────────────*/
+const FAV_KEY = 'gitfile:favorites';
+const RECENT_KEY = 'gitfile:recents';
+const FC_PREFIX = 'gitfile:fc:';
+const FC_IDX = 'gitfile:fcidx';
+
+async function loadRepoPrefs(){
+  if (!S.favorites) { try { S.favorites = new Set(JSON.parse((await store.get(FAV_KEY)) || '[]')); } catch { S.favorites = new Set(); } }
+  if (!S.recents)   { try { S.recents = JSON.parse((await store.get(RECENT_KEY)) || '[]'); } catch { S.recents = []; } }
+}
+async function pushRecent(fullName){
+  await loadRepoPrefs();
+  S.recents = [fullName, ...S.recents.filter(x => x !== fullName)].slice(0, 8);
+  try { await store.set(RECENT_KEY, JSON.stringify(S.recents)); } catch {}
+}
+async function toggleFav(fullName){
+  await loadRepoPrefs();
+  if (S.favorites.has(fullName)) S.favorites.delete(fullName); else S.favorites.add(fullName);
+  try { await store.set(FAV_KEY, JSON.stringify([...S.favorites])); } catch {}
+}
+
+// Offline read cache — keep the last handful of opened files viewable with no
+// signal. Small LRU so storage never balloons.
+function fcKey(path){ return FC_PREFIX + S.repo.owner + '/' + S.repo.name + ':' + S.branch + ':' + path; }
+async function cacheFile(path, text, sha){
+  if (text == null || text.length > 400000) return;    // skip very large files
+  try {
+    const k = fcKey(path);
+    await store.set(k, JSON.stringify({ text, sha, ts: Date.now() }));
+    let idx = [];
+    try { idx = JSON.parse((await store.get(FC_IDX)) || '[]'); } catch {}
+    idx = [k, ...idx.filter(x => x !== k)];
+    while (idx.length > 20) { const drop = idx.pop(); try { await store.del(drop); } catch {} }
+    await store.set(FC_IDX, JSON.stringify(idx));
+  } catch {}
+}
+async function cachedFile(path){
+  try { const raw = await store.get(fcKey(path)); return raw ? JSON.parse(raw) : null; } catch { return null; }
+}
+
+/* Star / pin icon used on repo rows. */
+const ICON_STAR = '<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M8 1.6l1.8 3.9 4.2.5-3.1 2.9.8 4.2L8 11.9 4.3 13.6l.8-4.2-3.1-2.9 4.2-.5z"/></svg>';
+const ICON_TRASH = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M6.5 1.5h3l.5 1H13v1.4H3V2.5h3zM3.8 4.9h8.4l-.62 8.7a1 1 0 0 1-1 .93H5.42a1 1 0 0 1-1-.93z"/></svg>';
+
 async function openRepos(){
   S.repo = null; S.file = null; S.path = '';
   paintRef();
@@ -2024,11 +2095,14 @@ async function openRepos(){
   list.innerHTML = '<div class="empty">Loading…</div>';
 
   try {
+    await loadRepoPrefs();
     const repos = await api.repos();
     if (!repos.length) { list.innerHTML = '<div class="empty">No repositories this token can reach.<br>Check the token\'s repository access.</div>'; return; }
 
     list.innerHTML = '';
-    repos.forEach(r => {
+    const byName = {}; repos.forEach(r => byName[r.full_name] = r);
+
+    const makeRow = r => {
       const row = document.createElement('div');
       row.className = 'row';
 
@@ -2046,19 +2120,46 @@ async function openRepos(){
         private: r.private
       });
 
-      // A delete button on the row. It never deletes on tap — it opens the same
-      // type-the-name confirmation the Settings danger zone uses, because a repo
-      // delete has no undo.
+      // Pin / favorite toggle.
+      const fav = document.createElement('button');
+      fav.className = 'rowpin' + (S.favorites.has(r.full_name) ? ' on' : '');
+      fav.innerHTML = ICON_STAR;
+      fav.setAttribute('aria-label', (S.favorites.has(r.full_name) ? 'Unpin ' : 'Pin ') + r.name);
+      fav.onclick = async e => { e.stopPropagation(); await toggleFav(r.full_name); openRepos(); };
+
+      // Delete opens the type-the-name confirmation — never deletes on tap.
       const del = document.createElement('button');
       del.className = 'rowmenu';
-      del.textContent = '🗑';
+      del.innerHTML = ICON_TRASH;
       del.setAttribute('aria-label', 'Delete ' + r.name);
       del.onclick = e => { e.stopPropagation(); deleteRepoConfirm(r.owner.login, r.name); };
 
       row.appendChild(b);
+      row.appendChild(fav);
       row.appendChild(del);
-      list.appendChild(row);
-    });
+      return row;
+    };
+
+    const section = (title, items) => {
+      if (!items.length) return;
+      const h = document.createElement('div');
+      h.className = 'listhead';
+      h.textContent = title;
+      list.appendChild(h);
+      items.forEach(r => list.appendChild(makeRow(r)));
+    };
+
+    const pinned = [...S.favorites].map(fn => byName[fn]).filter(Boolean);
+    const recent = (S.recents || []).map(fn => byName[fn])
+      .filter(r => r && !S.favorites.has(r.full_name)).slice(0, 6);
+
+    if (pinned.length || recent.length) {
+      section('Pinned', pinned);
+      section('Recent', recent);
+      section('All repositories', repos);
+    } else {
+      repos.forEach(r => list.appendChild(makeRow(r)));
+    }
   } catch (e) {
     list.innerHTML = `<div class="empty">${e.message}</div>`;
   }
@@ -2334,10 +2435,10 @@ async function starsSheet(){
         ${stars.map((r, i) => `
           <div class="row">
             <button class="rowmain" data-open="${i}">
-              <span class="glyph">★</span>
+              <span class="glyph">${ICON_STAR}</span>
               <span class="name">${esc(r.full_name)}</span>
             </button>
-            <button class="rowmenu" data-unstar="${i}" aria-label="Unstar">✕</button>
+            <button class="rowmenu" data-unstar="${i}" aria-label="Unstar">×</button>
           </div>`).join('')}
       </div>
       <button class="btn wide" onclick="closeSheet()">Close</button>`;
@@ -2367,6 +2468,7 @@ async function openRepo(repo){
   S.branch = repo.default_branch;
   S.path = '';
   S.file = null;
+  pushRecent(repo.owner + '/' + repo.name);   // for the Recent list on the home screen
 
   show('tree');
   await loadBranches();
@@ -2541,8 +2643,8 @@ async function paintCommitBar(){
     api.commitStatus(S.repo.owner, S.repo.name, c.sha).then(st => {
       const dot = $('cistate');
       if (!dot || !st || !st.total_count) return;
-      const map = { success:['✓', 'var(--green-fg)'], failure:['✕', 'var(--red)'],
-                    error:['✕', 'var(--red)'], pending:['●', '#d29922'] };
+      const map = { success:['●', 'var(--green-fg)'], failure:['●', 'var(--red)'],
+                    error:['●', 'var(--red)'], pending:['●', '#d29922'] };
       const m = map[st.state];
       if (m) { dot.textContent = m[0]; dot.style.color = m[1]; dot.title = 'CI: ' + st.state; }
     }).catch(() => {});
@@ -2840,7 +2942,7 @@ async function openFile(path){
                  raw: f.download_url || null,
                  size: f.size || new TextEncoder().encode(text).length };
     S.buffer = text;
-
+    cacheFile(f.path, text, f.sha);          // keep an offline copy
     ed.value = text;
     ed.readOnly = true;          // files open read-only, like GitHub — the pencil unlocks them
     S.editing = false;
@@ -2864,6 +2966,23 @@ async function openFile(path){
     } catch { /* no draft, no problem */ }
 
   } catch (e) {
+    // No signal? Show the last cached copy, read-only, rather than nothing.
+    const cached = isOffline(e) ? await cachedFile(path) : null;
+    if (cached) {
+      const text = cached.text;
+      S.file = { path, sha: cached.sha, text, binary: false, raw: null, offline: true,
+                 size: new TextEncoder().encode(text).length };
+      S.buffer = text;
+      ed.value = text; ed.readOnly = true; S.editing = false;
+      filePane('edit');
+      $('draftbar').style.display = 'none';
+      const fe = $('fi-edit'); if (fe) fe.style.display = 'none';   // can't edit without a connection
+      $('findbar').style.display = 'none'; FIND = { q:'', hits:[], idx:-1 };
+      paintPath(); paintStats(); paintHL(true); paintRef();
+      setBar([{ label:'Back', onClick:() => backToTree(), solid:true }]);
+      toast('Offline copy — may be out of date.', 5000);
+      return;
+    }
     S.file = null;
     ed.value = '';
     ed.readOnly = true;
@@ -3016,6 +3135,7 @@ function editBar(){
 
 function enterEdit(restore){
   if (!S.file || S.file.binary) return;
+  if (S.file.offline) { toast('This is an offline copy — reconnect to edit.', 4000); return; }
   S.editing = true;
   const ed = $('editor');
   ed.readOnly = false;
@@ -3209,6 +3329,7 @@ function fileMenu(){
       <button id="m-find">Find in file<small>Search${editing ? ' and replace' : ''}, or :42 to jump to a line</small></button>
       <button id="m-blame">Blame<small>Who last changed each line</small></button>
       <button id="m-raw">Open raw<small>The plain file on GitHub</small></button>
+      <button id="m-perma">Copy permalink<small>Link to this file (and line) at this commit</small></button>
       <button id="m-copy">Copy contents</button>
       <button id="m-dl">Download</button>
     </div>
@@ -3219,9 +3340,33 @@ function fileMenu(){
     $('m-find').onclick  = () => { closeSheet(); toggleFind(); };
     $('m-blame').onclick = () => { closeSheet(); openBlame(); };
     $('m-raw').onclick   = () => { closeSheet(); doRaw(); };
+    if ($('m-perma')) $('m-perma').onclick = () => { closeSheet(); copyPermalink(); };
     $('m-copy').onclick  = () => { closeSheet(); doCopy(); };
     $('m-dl').onclick    = () => { closeSheet(); doDownload(); };
   });
+}
+
+/* Build a GitHub permalink to the current file — pinned to the file's latest
+   commit so the link never rots — plus #L{n} if a line is selected. */
+async function copyPermalink(){
+  if (!S.file) return;
+  let ref = S.branch;
+  try {
+    const cs = await api.commits(S.repo.owner, S.repo.name, S.branch, S.file.path);
+    if (cs && cs[0]) ref = cs[0].sha;           // a real permalink uses the commit sha
+  } catch { /* fall back to the branch ref */ }
+
+  const path = S.file.path.split('/').map(encodeURIComponent).join('/');
+  let url = 'https://github.com/' + S.repo.owner + '/' + S.repo.name + '/blob/' + ref + '/' + path;
+
+  const ed = $('editor');
+  if (ed && ed.value && (ed.selectionStart > 0 || ed.selectionEnd > 0)) {
+    url += '#L' + (ed.value.slice(0, ed.selectionStart).split('\n').length);
+  }
+
+  if (window.Native && window.Native.copy) window.Native.copy(url);
+  else if (navigator.clipboard) navigator.clipboard.writeText(url);
+  toast('Permalink copied');
 }
 
 $('fi-edit').onclick = () => enterEdit();
@@ -4007,7 +4152,7 @@ async function cachesSheet(){
                 <span class="sub" style="display:block;color:var(--fg-muted);font-size:11px">${esc(c.ref.replace('refs/heads/', ''))} · ${bytes(c.size_in_bytes)}</span>
               </span>
             </span>
-            <button class="rowmenu" data-cache="${c.id}" aria-label="Delete cache">🗑</button>
+            <button class="rowmenu" data-cache="${c.id}" aria-label="Delete cache">${ICON_TRASH}</button>
           </div>`).join('')}
       </div>
       <button class="btn danger wide" id="ca-all">Clear all caches</button>
@@ -4149,10 +4294,10 @@ function stopPoll(){
 
 const STEP = {
   success:   ['done',  '●'],
-  failure:   ['fail',  '✕'],
+  failure:   ['fail',  '×'],
   cancelled: ['fail',  '⊘'],
   skipped:   ['skip',  '–'],
-  timed_out: ['fail',  '⏱']
+  timed_out: ['fail',  '×']
 };
 
 function stepClass(st){
@@ -4576,7 +4721,7 @@ function renderRelFiles(){
         `<div class="attachrow">
            <span class="an">${esc(f.name)}</span>
            <span class="as">${bytes(f.size)}</span>
-           <button class="ax" data-i="${i}" aria-label="Remove">✕</button>
+           <button class="ax" data-i="${i}" aria-label="Remove">×</button>
          </div>`).join('')
     : '<p class="hint" style="margin:0">No files attached yet.</p>';
   box.querySelectorAll('.ax').forEach(b => b.onclick = () => {
@@ -5001,6 +5146,14 @@ async function openSettings(){
       </div>
 
       <div class="setgroup">
+        <h2>Insights &amp; export</h2>
+        <div class="sheetlist">
+          <button id="set-traffic">Traffic<small>Views &amp; clones, last 14 days</small></button>
+          <button id="set-export">Export repository<small>Download the branch as a .zip</small></button>
+        </div>
+      </div>
+
+      <div class="setgroup">
         <h2>Actions &amp; CI</h2>
         <div class="sheetlist">
           <button id="set-vars">Variables<small>Actions configuration variables</small></button>
@@ -5054,6 +5207,8 @@ async function openSettings(){
     $('set-deploys').onclick = deploysSheet;
     $('set-hooks').onclick   = hooksSheet;
     $('set-pages').onclick   = pagesSheet;
+    $('set-traffic').onclick = trafficSheet;
+    $('set-export').onclick  = exportZip;
 
   } catch (e) {
     v.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
@@ -5077,7 +5232,7 @@ async function varsSheet(){
           <div style="display:flex; gap:8px">
             <input type="text" id="var-${i}" value="${esc(v.value)}" spellcheck="false" style="flex:1">
             <button class="btn small" data-save="${esc(v.name)}" data-i="${i}">Save</button>
-            <button class="btn small danger" data-del="${esc(v.name)}">✕</button>
+            <button class="btn small danger" data-del="${esc(v.name)}">×</button>
           </div>
         </div>`).join('') : '<p class="hint">No variables yet.</p>'}
       <div class="setgroup" style="margin-top:8px">
@@ -5223,6 +5378,42 @@ async function pagesSheet(){
       : _errBox(e))
       + '<div style="height:10px"></div><button class="btn wide" onclick="closeSheet()">Close</button>';
   }
+}
+
+/* Traffic — views and clones over the last 14 days. Needs push access; if the
+   token or your role can't see it, the numbers show as dashes. */
+async function trafficSheet(){
+  sheet('Traffic', '<div class="empty">Loading…</div>');
+  const n = x => (x == null ? '—' : x.toLocaleString());
+  try {
+    const [v, c] = await Promise.all([
+      api.trafficViews(S.repo.owner, S.repo.name).catch(() => null),
+      api.trafficClones(S.repo.owner, S.repo.name).catch(() => null)
+    ]);
+    $('sheetbody').innerHTML = `
+      <p class="hint" style="margin-top:0">Last 14 days.</p>
+      <div class="trow"><span class="tk">Views</span><span class="tv">${v ? n(v.count) + ' · ' + n(v.uniques) + ' unique' : '—'}</span></div>
+      <div class="trow"><span class="tk">Clones</span><span class="tv">${c ? n(c.count) + ' · ' + n(c.uniques) + ' unique' : '—'}</span></div>
+      <p class="hint">Dashes mean the token (or your role on this repo) can't read traffic — it needs push access.</p>
+      <button class="btn wide" onclick="closeSheet()">Close</button>`;
+  } catch (e) { $('sheetbody').innerHTML = _errBox(e); }
+}
+
+/* Export the current branch as a .zip. The native downloader carries the token
+   and follows GitHub's redirect; in a plain browser we open the web archive. */
+function exportZip(){
+  const o = S.repo.owner, r = S.repo.name, ref = S.branch;
+  const name = r + '-' + ref + '.zip';
+  if (window.Native && window.Native.download) {
+    downloadNative({
+      url: 'https://api.github.com/repos/' + o + '/' + r + '/zipball/' + encodeURIComponent(ref),
+      accept: 'application/zip', name, unzip: false, size: 0, label: name
+    });
+  } else {
+    const web = 'https://github.com/' + o + '/' + r + '/archive/refs/heads/' + encodeURIComponent(ref) + '.zip';
+    window.open(web, '_blank');
+  }
+  toast('Downloading ' + name + '…');
 }
 
 function toggleRow(id, label, desc, on){
@@ -5516,6 +5707,7 @@ function mergeSheet(pr){
     </div>
     <div class="sheetlist">
       <button id="p-open">View on GitHub<small>Diff, comments, checks</small></button>
+      <button id="p-files">Files &amp; line comments<small>Review the diff, comment on a line</small></button>
       <button id="p-approve">Approve<small>Submit an approving review</small></button>
       <button id="p-request">Request changes<small>Block with required changes</small></button>
       <button id="p-comment">Comment<small>Leave a review comment</small></button>
@@ -5531,6 +5723,7 @@ function mergeSheet(pr){
     $('p-approve').onclick = () => reviewSheet(pr, 'APPROVE');
     $('p-request').onclick = () => reviewSheet(pr, 'REQUEST_CHANGES');
     $('p-comment').onclick = () => reviewSheet(pr, 'COMMENT');
+    $('p-files').onclick   = () => { closeSheet(); openPRFiles(pr); };
 
     $('p-merge').onclick = async () => {
       const btn = $('p-merge');
@@ -5548,6 +5741,83 @@ function mergeSheet(pr){
                                : e.message, 6000);
       } finally {
         busy(btn, false);
+      }
+    };
+  });
+}
+
+/* ── PR files & per-line comments ─────────────────────────────────────────
+   Show the PR's diff, and let a tap on any line leave a review comment there.
+   The tricky part is turning a unified-diff patch back into real line numbers:
+   each hunk header @@ -a,b +c,d @@ resets the old/new counters, then + advances
+   the new side, - the old side, and context both. */
+async function openPRFiles(pr){
+  show('prfiles');
+  const v = $('v-prfiles');
+  v.innerHTML = '<div class="empty">Loading…</div>';
+  setBar([{ label:'Back', onClick: openPRs, solid:true }]);
+  try {
+    const files = await api.prFiles(S.repo.owner, S.repo.name, pr.number);
+    S.prCtx = { number: pr.number, commit_id: pr.head.sha };
+    if (!files.length) { v.innerHTML = '<div class="empty">No changed files.</div>'; return; }
+    v.innerHTML = `<h1>#${pr.number} · Files</h1>
+      <p class="hint" style="margin-top:-8px">Tap any changed line to comment on it.</p>`
+      + files.map(renderPRPatch).join('');
+    v.querySelectorAll('.cline').forEach(el => el.onclick = () =>
+      prCommentSheet(el.dataset.path, +el.dataset.line, el.dataset.side));
+  } catch (e) {
+    v.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+
+function renderPRPatch(f){
+  const head = `
+    <div class="filediff">
+      <div class="fdhead">
+        <span class="fdname">${esc(f.filename)}</span>
+        <span class="fdstat"><span class="a">+${f.additions}</span> <span class="d">−${f.deletions}</span></span>
+      </div>`;
+  if (!f.patch) return head + `<div class="fdnote">${esc(f.status)} · binary or too large to show</div></div>`;
+
+  let oldLine = 0, newLine = 0;
+  const rows = f.patch.split('\n').map(line => {
+    const ch = line[0];
+    if (ch === '@') {
+      const m = /@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+      if (m) { oldLine = +m[1]; newLine = +m[2]; }
+      return `<div class="gap">${esc(line) || '&nbsp;'}</div>`;
+    }
+    if (ch === '\\') return `<div class="ctx">${esc(line)}</div>`;   // "No newline at end of file"
+    let side, ln, cls;
+    if (ch === '+')      { side = 'RIGHT'; ln = newLine; cls = 'add'; newLine++; }
+    else if (ch === '-') { side = 'LEFT';  ln = oldLine; cls = 'del'; oldLine++; }
+    else                 { side = 'RIGHT'; ln = newLine; cls = 'ctx'; oldLine++; newLine++; }
+    return `<div class="${cls} cline" data-path="${esc(f.filename)}" data-line="${ln}" data-side="${side}">${esc(line) || '&nbsp;'}</div>`;
+  }).join('');
+
+  return head + `<div class="diff">${rows}</div></div>`;
+}
+
+function prCommentSheet(path, line, side){
+  sheet('Comment on line', `
+    <div class="overwrite" style="margin-top:0"><span class="mono">${esc(path.split('/').pop())}:${line}</span></div>
+    <div class="field"><textarea id="rc-body" rows="4" placeholder="Markdown"></textarea></div>
+    <button class="btn solid wide" id="rc-go">Comment</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => {
+    $('rc-go').onclick = async () => {
+      const body = $('rc-body').value.trim();
+      if (!body) { toast('Write a comment first.'); return; }
+      const btn = $('rc-go'); busy(btn, true, 'Posting…');
+      try {
+        await api.reviewComment(S.repo.owner, S.repo.name, S.prCtx.number, {
+          body, commit_id: S.prCtx.commit_id, path, line, side
+        });
+        closeSheet(); toast('Comment posted');
+      } catch (e) {
+        busy(btn, false);
+        toast(e.status === 422 ? 'GitHub rejected the comment — that line may not be part of the diff.' : e.message, 7000);
       }
     };
   });
@@ -5851,12 +6121,19 @@ async function openBlame(){
     const lines = (S.file.text || '').split('\n');
     const rows = lines.map((line, i) => {
       const c = byLine[i + 1];
+      const oid = c ? (c.abbreviatedOid || '') : '';
       const who = c
-        ? `<span class="bsha">${esc(c.abbreviatedOid)}</span> ${esc((c.author && c.author.name) || '')}`
+        ? `<span class="bsha">${esc(oid)}</span> ${esc((c.author && c.author.name) || '')}`
         : '';
-      return `<div class="brow"><span class="bwho">${who}</span><span class="bline">${esc(line) || '&nbsp;'}</span></div>`;
+      return `<div class="brow"><span class="bwho" data-oid="${esc(oid)}">${who}</span><span class="bline">${esc(line) || '&nbsp;'}</span></div>`;
     }).join('');
-    v.innerHTML = `<h1>Blame · ${esc(S.file.path.split('/').pop())}</h1><div class="blame">${rows}</div>`;
+    v.innerHTML = `<h1>Blame · ${esc(S.file.path.split('/').pop())}</h1>
+      <p class="hint" style="margin-top:-8px">Tap a commit id to open it.</p>
+      <div class="blame">${rows}</div>`;
+    // Tapping the commit id opens that commit (GitHub resolves the short sha).
+    v.querySelectorAll('.bwho[data-oid]').forEach(el => el.onclick = () => {
+      if (el.dataset.oid) openCommit(el.dataset.oid, () => openBlame());
+    });
   } catch (e) {
     v.innerHTML = `<div class="empty">${esc(e.message || 'Blame failed.')}</div>`;
   }
@@ -7038,7 +7315,7 @@ function editorSheet(){
     </div>
     <div class="overwrite">Theme</div>
     <div class="sheetlist" id="ed-themes">
-      ${THEMES.map(t => `<button data-t="${t}">${THEME_NAMES[t]}${t === ED_THEME ? ' ✓' : ''}</button>`).join('')}
+      ${THEMES.map(t => `<button data-t="${t}">${THEME_NAMES[t]}${t === ED_THEME ? ' (current)' : ''}</button>`).join('')}
     </div>
     <div style="height:6px"></div>
     <button class="btn wide" onclick="closeSheet()">Close</button>
@@ -7048,7 +7325,7 @@ function editorSheet(){
     $('ed-themes').querySelectorAll('button').forEach(b => b.onclick = () => {
       applyTheme(b.dataset.t);
       store.set(THEME_KEY, ED_THEME);
-      editorSheet();     // repaint so the ✓ moves
+      editorSheet();     // repaint so the marker moves
     });
   });
 }
@@ -7074,7 +7351,7 @@ async function lockSheet(){
 
     <div class="overwrite" style="margin-top:0">Auto-lock when backgrounded</div>
     <div class="sheetlist" id="al-opts">
-      ${alOpts.map(([v, label]) => `<button data-v="${v}">${label}${v === al ? ' ✓' : ''}</button>`).join('')}
+      ${alOpts.map(([v, label]) => `<button data-v="${v}">${label}${v === al ? ' (current)' : ''}</button>`).join('')}
     </div>
 
     ${hasBiometric() ? `<button class="btn wide" id="lk-bio">Enable fingerprint unlock</button><div style="height:10px"></div>` : ''}
@@ -7086,7 +7363,7 @@ async function lockSheet(){
   `, () => {
     $('al-opts').querySelectorAll('button').forEach(b => b.onclick = async () => {
       await store.set(AUTOLOCK_KEY, b.dataset.v);
-      lockSheet();     // repaint to move the ✓
+      lockSheet();     // repaint to move the marker
     });
     if (hasBiometric()) $('lk-bio').onclick = () => {
       try { window.Native.enableBiometric(S.token); toast('Fingerprint unlock enabled.'); }
