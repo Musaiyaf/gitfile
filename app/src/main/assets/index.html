@@ -345,6 +345,9 @@ input.masked.plain{ -webkit-text-security:none; letter-spacing:0; }
 .trow .tk{ color:var(--fg-muted); flex:none; }
 .trow .tv{ color:var(--fg); text-align:right; word-break:break-word; font-family:var(--mono); font-size:12px; }
 
+/* Commit CI status mark in the commit bar */
+.cistate{ font-family:var(--mono); font-weight:700; flex:none; }
+
 /* In-file find bar */
 #findbar{ padding:8px 0 4px; display:flex; flex-direction:column; gap:6px; }
 #findbar .findrow{ display:flex; align-items:center; gap:6px; }
@@ -1558,6 +1561,38 @@ const api = {
   patchMe:   (body)        => gh('/user', { method:'PATCH', body }),
   myStars:   ()            => gh('/user/starred?per_page=50'),
   unstar:    (o, r)        => gh(`/user/starred/${o}/${r}`, { method:'DELETE' }),
+  isStarred: (o, r)        => gh(`/user/starred/${o}/${r}`),                    // 204 starred, 404 not
+  star:      (o, r)        => gh(`/user/starred/${o}/${r}`, { method:'PUT' }),
+
+  // Commit statuses (the combined CI state for a ref).
+  commitStatus: (o, r, ref) => gh(`/repos/${o}/${r}/commits/${ref}/status`),
+
+  // Actions variables — plaintext, full CRUD.
+  variables:     (o, r)             => gh(`/repos/${o}/${r}/actions/variables?per_page=100`),
+  makeVariable:  (o, r, body)       => gh(`/repos/${o}/${r}/actions/variables`, { method:'POST', body }),
+  patchVariable: (o, r, name, body) => gh(`/repos/${o}/${r}/actions/variables/${name}`, { method:'PATCH', body }),
+  delVariable:   (o, r, name)       => gh(`/repos/${o}/${r}/actions/variables/${name}`, { method:'DELETE' }),
+
+  // Actions secrets — names only (values are write-only and need sealed-box crypto to set).
+  secrets:   (o, r)        => gh(`/repos/${o}/${r}/actions/secrets?per_page=100`),
+  delSecret: (o, r, name)  => gh(`/repos/${o}/${r}/actions/secrets/${name}`, { method:'DELETE' }),
+
+  // Webhooks.
+  hooks:     (o, r)        => gh(`/repos/${o}/${r}/hooks?per_page=100`),
+  delHook:   (o, r, id)    => gh(`/repos/${o}/${r}/hooks/${id}`, { method:'DELETE' }),
+  pingHook:  (o, r, id)    => gh(`/repos/${o}/${r}/hooks/${id}/pings`, { method:'POST' }),
+
+  // Environments.
+  environments: (o, r)     => gh(`/repos/${o}/${r}/environments`),
+  delEnv:    (o, r, name)  => gh(`/repos/${o}/${r}/environments/${encodeURIComponent(name)}`, { method:'DELETE' }),
+
+  // Deployments.
+  deployments:    (o, r)     => gh(`/repos/${o}/${r}/deployments?per_page=30`),
+  deployStatuses: (o, r, id) => gh(`/repos/${o}/${r}/deployments/${id}/statuses?per_page=1`),
+
+  // GitHub Pages.
+  pages:      (o, r)       => gh(`/repos/${o}/${r}/pages`),
+  buildPages: (o, r)       => gh(`/repos/${o}/${r}/pages/builds`, { method:'POST' }),
 
   /* Fire a workflow_dispatch. Needs the token's Actions permission at read AND
      write — read-only is enough to watch runs, not to start one. Returns 204,
@@ -2499,7 +2534,18 @@ async function paintCommitBar(){
     el.innerHTML = `
       <span class="who">${esc(c.author ? c.author.login : c.commit.author.name)}</span>
       <span class="msg">${esc(c.commit.message.split('\n')[0])}</span>
+      <span class="cistate" id="cistate"></span>
       <span class="when">${c.sha.slice(0, 7)} · ${ago(c.commit.author.date)}</span>`;
+
+    // The combined CI status for this commit — a check, a cross, or a dot.
+    api.commitStatus(S.repo.owner, S.repo.name, c.sha).then(st => {
+      const dot = $('cistate');
+      if (!dot || !st || !st.total_count) return;
+      const map = { success:['✓', 'var(--green-fg)'], failure:['✕', 'var(--red)'],
+                    error:['✕', 'var(--red)'], pending:['●', '#d29922'] };
+      const m = map[st.state];
+      if (m) { dot.textContent = m[0]; dot.style.color = m[1]; dot.title = 'CI: ' + st.state; }
+    }).catch(() => {});
   } catch {
     el.innerHTML = '';   // a missing commit bar is better than an error in it
   }
@@ -2589,6 +2635,8 @@ async function paintAbout(){
           <span><b>${num(info.forks_count)}</b> forks</span>
         </div>
 
+        <button class="btn small" id="ab-star" style="align-self:flex-start">Star</button>
+
         <div class="abmeta">
           ${lic ? `<div>${esc(lic)} license</div>` : ''}
           <div>${num(info.open_issues_count)} open issue${info.open_issues_count === 1 ? '' : 's'} &amp; PRs</div>
@@ -2628,6 +2676,24 @@ async function paintAbout(){
 function wireAbout(){
   const rel = $('ab-rel');
   if (rel) rel.onclick = openReleases;
+
+  // Star / unstar toggle. Checks current state, then flips it on tap.
+  const sb = $('ab-star');
+  if (sb) {
+    api.isStarred(S.repo.owner, S.repo.name)
+      .then(() => { sb.textContent = 'Unstar'; sb.dataset.on = '1'; })
+      .catch(() => { sb.textContent = 'Star';   sb.dataset.on = '';  });
+    sb.onclick = async () => {
+      const on = sb.dataset.on === '1';
+      sb.disabled = true;
+      try {
+        if (on) { await api.unstar(S.repo.owner, S.repo.name); sb.textContent = 'Star';   sb.dataset.on = '';  toast('Unstarred'); }
+        else    { await api.star(S.repo.owner, S.repo.name);   sb.textContent = 'Unstar'; sb.dataset.on = '1'; toast('Starred'); }
+        ABOUT = { key: null, html: null };   // invalidate cache so the count refreshes next open
+      } catch (e) { toast(e.message, 5000); }
+      finally { sb.disabled = false; }
+    };
+  }
 }
 
 function paintCrumbs(){
@@ -4934,6 +5000,18 @@ async function openSettings(){
         ${toggleRow('set-disc',     'Discussions',  'Community conversations', R.has_discussions)}
       </div>
 
+      <div class="setgroup">
+        <h2>Actions &amp; CI</h2>
+        <div class="sheetlist">
+          <button id="set-vars">Variables<small>Actions configuration variables</small></button>
+          <button id="set-secrets">Secrets<small>Actions secrets (names)</small></button>
+          <button id="set-envs">Environments<small>Deployment environments</small></button>
+          <button id="set-deploys">Deployments<small>Recent deployments &amp; status</small></button>
+          <button id="set-hooks">Webhooks<small>Outgoing webhooks</small></button>
+          <button id="set-pages">GitHub Pages<small>Site status &amp; rebuild</small></button>
+        </div>
+      </div>
+
       <div class="danger">
         <h2>Danger zone</h2>
         <div class="dangerrow">
@@ -4969,8 +5047,181 @@ async function openSettings(){
 
     wireSettings(R);
 
+    // Actions & CI entries.
+    $('set-vars').onclick    = varsSheet;
+    $('set-secrets').onclick = secretsSheet;
+    $('set-envs').onclick    = envsSheet;
+    $('set-deploys').onclick = deploysSheet;
+    $('set-hooks').onclick   = hooksSheet;
+    $('set-pages').onclick   = pagesSheet;
+
   } catch (e) {
     v.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+
+/* ── Actions & CI management sheets ───────────────────────────────────────
+   Each lists the resource and offers the safe actions the API allows from a
+   phone. Owner/name come from the repo you're in. */
+const _errBox = e => '<div class="empty">' + esc(e.message || 'Failed.') + '</div>';
+
+async function varsSheet(){
+  sheet('Variables', '<div class="empty">Loading…</div>');
+  try {
+    const data = await api.variables(S.repo.owner, S.repo.name);
+    const vars = data.variables || [];
+    $('sheetbody').innerHTML = `
+      ${vars.length ? vars.map((v, i) => `
+        <div class="field">
+          <label>${esc(v.name)}</label>
+          <div style="display:flex; gap:8px">
+            <input type="text" id="var-${i}" value="${esc(v.value)}" spellcheck="false" style="flex:1">
+            <button class="btn small" data-save="${esc(v.name)}" data-i="${i}">Save</button>
+            <button class="btn small danger" data-del="${esc(v.name)}">✕</button>
+          </div>
+        </div>`).join('') : '<p class="hint">No variables yet.</p>'}
+      <div class="setgroup" style="margin-top:8px">
+        <h2>Add variable</h2>
+        <div class="field"><input type="text" id="nv-name" placeholder="NAME" spellcheck="false"></div>
+        <div class="field"><input type="text" id="nv-val" placeholder="value" spellcheck="false"></div>
+        <button class="btn solid wide" id="nv-add">Add variable</button>
+      </div>
+      <button class="btn wide" onclick="closeSheet()">Close</button>`;
+    $('sheetbody').querySelectorAll('[data-save]').forEach(b => b.onclick = async () => {
+      const name = b.dataset.save;
+      try { await api.patchVariable(S.repo.owner, S.repo.name, name, { name, value: $('var-' + b.dataset.i).value }); toast('Saved ' + name); }
+      catch (e) { toast(e.message, 5000); }
+    });
+    $('sheetbody').querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+      if (!confirm('Delete variable ' + b.dataset.del + '?')) return;
+      try { await api.delVariable(S.repo.owner, S.repo.name, b.dataset.del); toast('Deleted'); varsSheet(); }
+      catch (e) { toast(e.message, 5000); }
+    });
+    $('nv-add').onclick = async () => {
+      const name = $('nv-name').value.trim();
+      if (!name) { toast('Name required'); return; }
+      try { await api.makeVariable(S.repo.owner, S.repo.name, { name, value: $('nv-val').value }); toast('Added'); varsSheet(); }
+      catch (e) { toast(e.message, 5000); }
+    };
+  } catch (e) { $('sheetbody').innerHTML = _errBox(e); }
+}
+
+async function secretsSheet(){
+  sheet('Secrets', '<div class="empty">Loading…</div>');
+  try {
+    const data = await api.secrets(S.repo.owner, S.repo.name);
+    const secrets = data.secrets || [];
+    $('sheetbody').innerHTML = `
+      <p class="hint" style="margin-top:0">Secret <b>values</b> are write-only — GitHub never returns them. You can see the names and delete them here; setting a value needs encryption the app can't do in the browser, so add/update on GitHub.</p>
+      ${secrets.length ? secrets.map(s => `
+        <div class="trow"><span class="tv">${esc(s.name)}</span>
+          <button class="btn small danger" data-del="${esc(s.name)}">Delete</button></div>`).join('')
+        : '<p class="hint">No secrets.</p>'}
+      <div style="height:10px"></div>
+      <button class="btn wide" id="sec-manage">Add / update on GitHub</button>
+      <div style="height:10px"></div>
+      <button class="btn wide" onclick="closeSheet()">Close</button>`;
+    $('sheetbody').querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+      if (!confirm('Delete secret ' + b.dataset.del + '?')) return;
+      try { await api.delSecret(S.repo.owner, S.repo.name, b.dataset.del); toast('Deleted'); secretsSheet(); }
+      catch (e) { toast(e.message, 5000); }
+    });
+    $('sec-manage').onclick = () => {
+      const u = 'https://github.com/' + S.repo.owner + '/' + S.repo.name + '/settings/secrets/actions';
+      window.Native ? window.Native.openUrl(u) : window.open(u, '_blank');
+    };
+  } catch (e) { $('sheetbody').innerHTML = _errBox(e); }
+}
+
+async function hooksSheet(){
+  sheet('Webhooks', '<div class="empty">Loading…</div>');
+  try {
+    const hooks = await api.hooks(S.repo.owner, S.repo.name);
+    $('sheetbody').innerHTML = `
+      ${hooks.length ? hooks.map(h => `
+        <div class="setrow">
+          <div class="lbl" style="word-break:break-all">${esc(h.config && h.config.url ? h.config.url : h.name)}</div>
+          <div class="desc">${esc((h.events || []).join(', ') || 'events')} · ${h.active ? 'active' : 'inactive'}</div>
+          <div style="display:flex; gap:8px; margin-top:8px">
+            <button class="btn small" data-ping="${h.id}">Ping</button>
+            <button class="btn small danger" data-del="${h.id}">Delete</button>
+          </div>
+        </div>`).join('') : '<p class="hint">No webhooks.</p>'}
+      <div style="height:10px"></div>
+      <button class="btn wide" onclick="closeSheet()">Close</button>`;
+    $('sheetbody').querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+      if (!confirm('Delete this webhook?')) return;
+      try { await api.delHook(S.repo.owner, S.repo.name, b.dataset.del); toast('Deleted'); hooksSheet(); }
+      catch (e) { toast(e.message, 5000); }
+    });
+    $('sheetbody').querySelectorAll('[data-ping]').forEach(b => b.onclick = async () => {
+      try { await api.pingHook(S.repo.owner, S.repo.name, b.dataset.ping); toast('Ping sent'); }
+      catch (e) { toast(e.message, 5000); }
+    });
+  } catch (e) { $('sheetbody').innerHTML = _errBox(e); }
+}
+
+async function envsSheet(){
+  sheet('Environments', '<div class="empty">Loading…</div>');
+  try {
+    const data = await api.environments(S.repo.owner, S.repo.name);
+    const envs = data.environments || [];
+    $('sheetbody').innerHTML = `
+      ${envs.length ? envs.map(e => `
+        <div class="trow"><span class="tv">${esc(e.name)}</span>
+          <button class="btn small danger" data-del="${esc(e.name)}">Delete</button></div>`).join('')
+        : '<p class="hint">No environments.</p>'}
+      <div style="height:10px"></div>
+      <button class="btn wide" onclick="closeSheet()">Close</button>`;
+    $('sheetbody').querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+      if (!confirm('Delete environment ' + b.dataset.del + '?')) return;
+      try { await api.delEnv(S.repo.owner, S.repo.name, b.dataset.del); toast('Deleted'); envsSheet(); }
+      catch (err) { toast(err.message, 5000); }
+    });
+  } catch (e) { $('sheetbody').innerHTML = _errBox(e); }
+}
+
+async function deploysSheet(){
+  sheet('Deployments', '<div class="empty">Loading…</div>');
+  try {
+    const deps = await api.deployments(S.repo.owner, S.repo.name);
+    if (!deps.length) { $('sheetbody').innerHTML = '<p class="hint">No deployments.</p><button class="btn wide" onclick="closeSheet()">Close</button>'; return; }
+    $('sheetbody').innerHTML = deps.map(d => `
+      <div class="setrow">
+        <div class="lbl">${esc(d.environment || 'production')}</div>
+        <div class="desc">${esc(String(d.ref || '').slice(0, 24))} · ${ago(d.created_at)} ago · <span id="dep-${d.id}">…</span></div>
+      </div>`).join('') + '<div style="height:10px"></div><button class="btn wide" onclick="closeSheet()">Close</button>';
+    deps.forEach(async d => {
+      try {
+        const st = await api.deployStatuses(S.repo.owner, S.repo.name, d.id);
+        const el = $('dep-' + d.id);
+        if (el) el.textContent = (st && st[0]) ? st[0].state : 'no status';
+      } catch {}
+    });
+  } catch (e) { $('sheetbody').innerHTML = _errBox(e); }
+}
+
+async function pagesSheet(){
+  sheet('GitHub Pages', '<div class="empty">Loading…</div>');
+  try {
+    const p = await api.pages(S.repo.owner, S.repo.name);
+    $('sheetbody').innerHTML = `
+      <div class="trow"><span class="tk">Status</span><span class="tv">${esc(p.status || 'unknown')}</span></div>
+      <div class="trow"><span class="tk">URL</span><span class="tv">${p.html_url ? '<a href="' + esc(p.html_url) + '" target="_blank" rel="noopener">' + esc(p.html_url) + '</a>' : '—'}</span></div>
+      <div class="trow"><span class="tk">Source</span><span class="tv">${p.source ? esc(p.source.branch + (p.source.path || '')) : '—'}</span></div>
+      <div style="height:14px"></div>
+      <button class="btn solid wide" id="pg-build">Request a rebuild</button>
+      <div style="height:10px"></div>
+      <button class="btn wide" onclick="closeSheet()">Close</button>`;
+    $('pg-build').onclick = async () => {
+      try { await api.buildPages(S.repo.owner, S.repo.name); toast('Rebuild requested'); }
+      catch (e) { toast(e.message, 5000); }
+    };
+  } catch (e) {
+    $('sheetbody').innerHTML = (e.status === 404
+      ? '<p class="hint">GitHub Pages isn\'t enabled for this repository.</p>'
+      : _errBox(e))
+      + '<div style="height:10px"></div><button class="btn wide" onclick="closeSheet()">Close</button>';
   }
 }
 
