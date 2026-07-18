@@ -374,6 +374,14 @@ input.masked.plain{ -webkit-text-security:none; letter-spacing:0; }
 }
 .dctab.on{ color:var(--fg); border-color:var(--accent); background:rgba(56,139,253,.12); }
 .dcstate{ margin-left:auto; font-size:11px; color:var(--fg-subtle); font-family:var(--mono); }
+.dcfilters{ display:flex; gap:8px; flex-wrap:wrap; margin:0 0 12px; }
+.dcfilters select{
+  flex:1; min-width:100px; background:var(--inset); color:var(--fg);
+  border:1px solid var(--border-lit); border-radius:var(--r);
+  font:inherit; font-size:12px; padding:6px 8px;
+}
+/* About panel action row */
+.abacts{ display:flex; gap:8px; flex-wrap:wrap; }
 
 /* Commit CI status mark in the commit bar */
 .cistate{ font-family:var(--mono); font-weight:700; flex:none; }
@@ -1620,6 +1628,12 @@ const api = {
   isStarred: (o, r)        => gh(`/user/starred/${o}/${r}`),                    // 204 starred, 404 not
   star:      (o, r)        => gh(`/user/starred/${o}/${r}`, { method:'PUT' }),
 
+  // Watch (repository subscription) and fork.
+  isWatching: (o, r)       => gh(`/repos/${o}/${r}/subscription`),               // 404 when not watching
+  watch:      (o, r)       => gh(`/repos/${o}/${r}/subscription`, { method:'PUT', body:{ subscribed:true, ignored:false } }),
+  unwatch:    (o, r)       => gh(`/repos/${o}/${r}/subscription`, { method:'DELETE' }),
+  fork:       (o, r, body) => gh(`/repos/${o}/${r}/forks`, { method:'POST', body: body || {} }),
+
   // Commit statuses (the combined CI state for a ref).
   commitStatus: (o, r, ref) => gh(`/repos/${o}/${r}/commits/${ref}/status`),
 
@@ -2284,7 +2298,31 @@ async function openDiscover(){
     <div class="dctabs">
       <button class="dctab on" data-m="repos">Repositories</button>
       <button class="dctab" data-m="users">People</button>
+      <button class="dctab" data-m="trending">Trending</button>
       <span class="dcstate" id="dc-state"></span>
+    </div>
+    <div class="dcfilters" id="dc-filters">
+      <select id="dc-lang">
+        <option value="">Any language</option>
+        <option>JavaScript</option><option>TypeScript</option><option>Python</option>
+        <option>Java</option><option>Kotlin</option><option>C</option><option>C++</option>
+        <option>C#</option><option>Go</option><option>Rust</option><option>Ruby</option>
+        <option>PHP</option><option>Swift</option><option>Dart</option><option>Shell</option>
+        <option>HTML</option><option>CSS</option>
+      </select>
+      <select id="dc-stars">
+        <option value="">Any stars</option>
+        <option value="10">10+ stars</option>
+        <option value="100">100+ stars</option>
+        <option value="1000">1k+ stars</option>
+        <option value="10000">10k+ stars</option>
+      </select>
+      <select id="dc-sort">
+        <option value="stars">Most stars</option>
+        <option value="updated">Recently updated</option>
+        <option value="forks">Most forks</option>
+        <option value="">Best match</option>
+      </select>
     </div>
     <div id="dc-results"><div class="empty">Start typing to search all of GitHub.</div></div>`;
   setBar([{ label:'Back', onClick:openRepos, solid:true }]);
@@ -2293,8 +2331,16 @@ async function openDiscover(){
     v.querySelectorAll('.dctab').forEach(x => x.classList.remove('on'));
     t.classList.add('on');
     DISC.mode = t.dataset.m;
+    // People search has no repo filters; Trending needs no query.
+    $('dc-filters').style.display = DISC.mode === 'users' ? 'none' : 'flex';
+    $('dc-q').placeholder = DISC.mode === 'users' ? 'Search people…'
+                          : DISC.mode === 'trending' ? 'Optional: narrow trending…'
+                          : 'Search public repositories…';
     runDiscover(true);
   });
+
+  ['dc-lang', 'dc-stars', 'dc-sort'].forEach(id =>
+    $(id).addEventListener('change', () => runDiscover(true)));
 
   $('dc-q').addEventListener('input', () => runDiscover(false));
   $('dc-q').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); runDiscover(true); } });
@@ -2306,22 +2352,46 @@ function runDiscover(now){
   const go = () => doDiscover();
   if (now) go(); else DISC.timer = setTimeout(go, 450);   // debounce while typing
   const q = ($('dc-q') || {}).value || '';
-  if ($('dc-state')) $('dc-state').textContent = q.trim().length >= 2 ? 'searching…' : '';
+  if ($('dc-state')) $('dc-state').textContent =
+    (DISC.mode === 'trending' || q.trim().length >= 2) ? 'searching…' : '';
 }
 
 async function doDiscover(){
   const box = $('dc-results'); if (!box) return;
   const q = $('dc-q').value.trim();
-  if (q.length < 2) {
+  const trending = DISC.mode === 'trending';
+
+  // Trending works with no query at all; the other modes need something to go on.
+  if (!trending && q.length < 2) {
     box.innerHTML = '<div class="empty">Start typing to search all of GitHub.</div>';
     if ($('dc-state')) $('dc-state').textContent = '';
     return;
   }
   const seq = ++DISC.seq;                      // stale-response guard
   try {
-    const res = DISC.mode === 'users'
-      ? await api.searchUsers(q)
-      : await api.searchRepos(q, 'stars');
+    let res;
+    if (DISC.mode === 'users') {
+      res = await api.searchUsers(q);
+    } else {
+      // Compose GitHub's search qualifiers from the filter row.
+      const lang  = $('dc-lang')  ? $('dc-lang').value  : '';
+      const stars = $('dc-stars') ? $('dc-stars').value : '';
+      const sort  = $('dc-sort')  ? $('dc-sort').value  : 'stars';
+      const parts = [];
+      if (q) parts.push(q);
+      if (lang) parts.push('language:"' + lang + '"');
+      if (trending) {
+        // "Trending" isn't an API — approximate it the way people do by hand:
+        // repos pushed in the last week, ordered by stars.
+        const since = new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10);
+        parts.push('pushed:>' + since);
+        parts.push('stars:>' + (stars || 50));
+      } else if (stars) {
+        parts.push('stars:>=' + stars);
+      }
+      if (!parts.length) parts.push('stars:>1000');       // trending with no filters at all
+      res = await api.searchRepos(parts.join(' '), trending ? 'stars' : sort);
+    }
     if (seq !== DISC.seq) return;              // a newer query already went out
     if ($('dc-state')) $('dc-state').textContent = (res.total_count || 0).toLocaleString() + ' found';
 
@@ -2335,7 +2405,8 @@ async function doDiscover(){
       if (DISC.mode === 'users') openUserRepos(it.login);
       else openRepo({
         owner: it.owner.login, name: it.name,
-        default_branch: it.default_branch || 'main', private: it.private
+        default_branch: it.default_branch || 'main', private: it.private,
+        permissions: it.permissions
       });
     });
   } catch (e) {
@@ -3063,7 +3134,11 @@ async function paintAbout(){
           <span><b>${num(info.forks_count)}</b> forks</span>
         </div>
 
-        <button class="btn small" id="ab-star" style="align-self:flex-start">Star</button>
+        <div class="abacts">
+          <button class="btn small" id="ab-star">Star</button>
+          <button class="btn small" id="ab-watch">Watch</button>
+          <button class="btn small" id="ab-fork">Fork</button>
+        </div>
 
         <div class="abmeta">
           ${lic ? `<div>${esc(lic)} license</div>` : ''}
@@ -3122,6 +3197,60 @@ function wireAbout(){
       finally { sb.disabled = false; }
     };
   }
+
+  // Watch / unwatch — the notification subscription, GitHub's sibling to Star.
+  const wb = $('ab-watch');
+  if (wb) {
+    api.isWatching(S.repo.owner, S.repo.name)
+      .then(s => { const on = s && s.subscribed; wb.textContent = on ? 'Unwatch' : 'Watch'; wb.dataset.on = on ? '1' : ''; })
+      .catch(() => { wb.textContent = 'Watch'; wb.dataset.on = ''; });
+    wb.onclick = async () => {
+      const on = wb.dataset.on === '1';
+      wb.disabled = true;
+      try {
+        if (on) { await api.unwatch(S.repo.owner, S.repo.name); wb.textContent = 'Watch';   wb.dataset.on = '';  toast('Not watching'); }
+        else    { await api.watch(S.repo.owner, S.repo.name);   wb.textContent = 'Unwatch'; wb.dataset.on = '1'; toast('Watching'); }
+      } catch (e) { toast(e.message, 5000); }
+      finally { wb.disabled = false; }
+    };
+  }
+
+  // Fork — what you want the moment someone else's repo turns out to be useful.
+  const fb = $('ab-fork');
+  if (fb) fb.onclick = forkSheet;
+}
+
+/* Fork a repository into your own account. GitHub builds forks asynchronously,
+   so the copy can take a few seconds to become browsable — hence the pause
+   before opening it rather than jumping straight in. */
+function forkSheet(){
+  const o = S.repo.owner, r = S.repo.name;
+  sheet('Fork ' + r, `
+    <p class="hint" style="margin-top:0">Creates your own copy of <b>${esc(o + '/' + r)}</b> under <b>${esc((S.user && S.user.login) || 'your account')}</b>. You can commit to a fork even where you can't commit here.</p>
+    <label class="check"><input type="checkbox" id="fk-default" checked><span class="box"></span> Default branch only</label>
+    <div style="height:14px"></div>
+    <button class="btn solid wide" id="fk-go">Create fork</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => {
+    $('fk-go').onclick = async () => {
+      const btn = $('fk-go'); busy(btn, true, 'Forking…');
+      try {
+        const f = await api.fork(o, r, { default_branch_only: $('fk-default').checked });
+        closeSheet();
+        toast('Fork created — GitHub is still copying it.', 5000);
+        setTimeout(() => {
+          openRepo({ owner: f.owner.login, name: f.name,
+                     default_branch: f.default_branch || 'main',
+                     private: f.private, permissions: { push: true } })
+            .catch(() => toast('Fork created. It will appear in your repositories.', 5000));
+        }, 2500);
+      } catch (e) {
+        busy(btn, false);
+        toast(e.status === 403 ? 'Your token needs Administration (Read and write) to fork.' : e.message, 7000);
+      }
+    };
+  });
 }
 
 function paintCrumbs(){
