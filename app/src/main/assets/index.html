@@ -505,7 +505,11 @@ body.theme-aurora{
 .diffstat .d{ color:var(--del-fg); font-weight:600; }
 
 /* ══ Markdown, as GitHub renders it ══════════════════════════ */
-.md{ padding:16px; font-size:15px; line-height:1.6; }
+.md{ padding:16px; font-size:15px; line-height:1.6; overflow-wrap:anywhere; word-break:break-word; }
+.md img{ max-width:100%; height:auto; }
+.md pre{ overflow-x:auto; max-width:100%; }
+.md table{ display:block; overflow-x:auto; max-width:100%; }
+.md a{ overflow-wrap:anywhere; }
 .readme{ border:1px solid var(--border); border-radius:var(--r); }
 .readme .rhead{
   display:flex; align-items:center; gap:8px;
@@ -856,7 +860,9 @@ pre.log{
 .rel .title{ font-size:18px; font-weight:600; color:var(--fg); margin-bottom:6px; }
 .rel .title:hover{ color:var(--accent); }
 .rel .by{ font-size:12px; color:var(--fg-muted); }
-.rel .notes{ margin-top:12px; }
+.rel .notes{ margin-top:12px; min-width:0; overflow-x:hidden; }
+.rel{ min-width:0; overflow:hidden; }
+.rel .notes.md{ padding:0; }
 
 .badge{
   display:inline-block; border-radius:2em; padding:1px 8px;
@@ -2630,6 +2636,21 @@ async function openRepo(repo){
   S.file = null;
   pushRecent(repo.owner + '/' + repo.name);   // for the Recent list on the home screen
 
+  // Can we write here? Repos from our own list carry permissions; ones reached
+  // through Discover don't, so assume read-only until GitHub says otherwise.
+  // Every write control is gated on this, so browsing a stranger's repo shows
+  // no buttons that would only fail with a 403.
+  S.canPush = repo.permissions ? !!repo.permissions.push : (repo.owner === (S.user && S.user.login));
+  if (!repo.permissions) {
+    api.repoInfo(repo.owner, repo.name).then(info => {
+      const can = !!(info.permissions && info.permissions.push);
+      if (can !== S.canPush) {
+        S.canPush = can;
+        if (S.view === 'tree') paintTreeBar();     // repaint now that we know
+      }
+    }).catch(() => {});
+  }
+
   show('tree');
   await loadBranches();
   await loadTree('');
@@ -2698,13 +2719,7 @@ async function loadTree(path){
   paintRef();
   show('tree');
   paintCrumbs();
-
-  setBar([
-    { label:'Repos',    onClick:openRepos },
-    { label:'Go to file', onClick:gotoFileSheet },
-    { label:'Repo',     onClick:repoSheet },
-    { label:'+ New',    onClick:newSheet, solid:true, grow:true }
-  ]);
+  paintTreeBar();
 
   const list = $('treelist');
 
@@ -2737,6 +2752,18 @@ async function loadTree(path){
   }
 }
 
+/* The tree's action bar. "+ New" only exists where you can actually commit. */
+function paintTreeBar(){
+  const bar = [
+    { label:'Repos',      onClick:openRepos },
+    { label:'Go to file', onClick:gotoFileSheet },
+    { label:'Repo',       onClick:repoSheet }
+  ];
+  if (S.canPush) bar.push({ label:'+ New', onClick:newSheet, solid:true, grow:true });
+  else bar[bar.length - 1].solid = true, bar[bar.length - 1].grow = true;
+  setBar(bar);
+}
+
 function renderTree(items){
   const list = $('treelist');
 
@@ -2758,7 +2785,9 @@ function renderTree(items){
       row.className = 'row' + (it.type === 'dir' ? ' dir' : '');
 
       // Tap the checkbox to select; everything else behaves as before.
-      const pick = document.createElement('button');
+      // Selection exists to move or delete, so it's pointless without write access.
+      const pick = S.canPush ? document.createElement('button') : null;
+      if (pick) {
       pick.className = 'rowpick' + (S.sel.has(it.path) ? ' on' : '');
       pick.innerHTML = '<span class="box"></span>';
       pick.setAttribute('aria-label', 'Select ' + it.name);
@@ -2771,6 +2800,7 @@ function renderTree(items){
         pick.classList.toggle('on');
         paintSelBar();
       };
+      }
 
       const b = document.createElement('button');
       b.className = 'rowmain';
@@ -2786,9 +2816,9 @@ function renderTree(items){
       m.setAttribute('aria-label', 'Actions for ' + it.name);
       m.onclick = () => rowMenu(it);
 
-      row.appendChild(pick);
+      if (pick) row.appendChild(pick);
       row.appendChild(b);
-      row.appendChild(m);
+      if (S.canPush) row.appendChild(m);
       list.appendChild(row);
     });
     paintSelBar();
@@ -3244,7 +3274,7 @@ async function openFile(path){
     S.editing = false;
     filePane('edit');
     $('draftbar').style.display = 'none';
-    const fe = $('fi-edit'); if (fe) fe.style.display = '';
+    const fe = $('fi-edit'); if (fe) fe.style.display = S.canPush ? '' : 'none';
     const fd = $('fi-diff'); if (fd) fd.style.display = 'none';
     $('findbar').style.display = 'none';
     FIND = { q:'', hits:[], idx:-1 };
@@ -4116,10 +4146,10 @@ function repoSheet(){
       <button id="r-log">History<small>Recent commits on ${S.branch}</small></button>
       <button id="r-prs">Pull requests<small>Open, review and merge</small></button>
       <button id="r-runs">Actions<small>Watch the build that ships this app</small></button>
-      ${canPR ? `<button id="r-pr">Open pull request<small>${S.branch} → ${S.repo.default_branch}</small></button>` : ''}
-      ${canPR ? `<button id="r-delbr">Delete branch<small>Removes ${S.branch}. The commits survive in any PR.</small></button>` : ''}
+      ${canPR && S.canPush ? `<button id="r-pr">Open pull request<small>${S.branch} → ${S.repo.default_branch}</small></button>` : ''}
+      ${canPR && S.canPush ? `<button id="r-delbr">Delete branch<small>Removes ${S.branch}. The commits survive in any PR.</small></button>` : ''}
       <button id="r-issues">Issues<small>Report, discuss, track</small></button>
-      <button id="r-settings">Settings<small>Rename, default branch, features, danger zone</small></button>
+      ${S.canPush ? `<button id="r-settings">Settings<small>Rename, default branch, features, danger zone</small></button>` : ''}
       <button id="r-clone">Clone URLs<small>HTTPS, SSH and CLI, to copy</small></button>
     </div>
     <button class="btn wide" onclick="closeSheet()">Close</button>
@@ -4130,7 +4160,7 @@ function repoSheet(){
     $('r-prs').onclick      = () => { closeSheet(); openPRs(); };
     $('r-runs').onclick     = () => { closeSheet(); openActions(); };
     $('r-issues').onclick   = () => { closeSheet(); openIssues('open'); };
-    $('r-settings').onclick = () => { closeSheet(); openSettings(); };
+    if ($('r-settings')) $('r-settings').onclick = () => { closeSheet(); openSettings(); };
     if ($('r-pr'))    $('r-pr').onclick    = prSheet;
     if ($('r-delbr')) $('r-delbr').onclick = doDeleteBranch;
   });
@@ -4339,11 +4369,12 @@ async function openActions(status){
   S.runFilter = status || '';
   const v = $('v-actions');
   v.innerHTML = '<div class="empty">Loading…</div>';
-  setBar([
-    { label:'Back',    onClick:() => loadTree(S.path) },
-    { label:'Caches',  onClick:cachesSheet },
-    { label:'Run',     onClick:runSheet, solid:true, grow:true }
-  ]);
+  const actBar = [{ label:'Back', onClick:() => loadTree(S.path), solid:!S.canPush, grow:!S.canPush }];
+  if (S.canPush) {
+    actBar.push({ label:'Caches', onClick:cachesSheet });
+    actBar.push({ label:'Run',    onClick:runSheet, solid:true, grow:true });
+  }
+  setBar(actBar);
 
   try {
     const { workflow_runs: runs } = await api.runs(S.repo.owner, S.repo.name, S.runFilter);
@@ -4775,10 +4806,9 @@ async function openReleases(){
   const v = $('v-releases');
   v.innerHTML = '<div class="empty">Loading…</div>';
 
-  setBar([
-    { label:'Back',       onClick:() => loadTree(S.path) },
-    { label:'+ Release',  onClick:newReleaseSheet, solid:true, grow:true }
-  ]);
+  const relBar = [{ label:'Back', onClick:() => loadTree(S.path), solid:!S.canPush, grow:!S.canPush }];
+  if (S.canPush) relBar.push({ label:'+ Release', onClick:newReleaseSheet, solid:true, grow:true });
+  setBar(relBar);
 
   try {
     const rels = await api.releases(S.repo.owner, S.repo.name);
@@ -4868,11 +4898,12 @@ async function openRelease(id){
     $('as-zip').onclick = src(r.zipball_url ? r.html_url.replace(/\/releases\/tag\/.*$/, '') + '/archive/refs/tags/' + r.tag_name + '.zip' : r.html_url);
     $('as-tar').onclick = src(r.html_url.replace(/\/releases\/tag\/.*$/, '') + '/archive/refs/tags/' + r.tag_name + '.tar.gz');
 
-    setBar([
-      { label:'Back',   onClick:openReleases },
-      { label:'Edit',   onClick:() => editReleaseSheet(r) },
-      { label:'Attach', onClick:() => attachSheet(r), solid:true, grow:true }
-    ]);
+    const relDetail = [{ label:'Back', onClick:openReleases, solid:!S.canPush, grow:!S.canPush }];
+    if (S.canPush) {
+      relDetail.push({ label:'Edit',   onClick:() => editReleaseSheet(r) });
+      relDetail.push({ label:'Attach', onClick:() => attachSheet(r), solid:true, grow:true });
+    }
+    setBar(relDetail);
 
   } catch (e) {
     v.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
@@ -5822,10 +5853,9 @@ async function openIssues(state){
   $('is-open').onclick   = () => openIssues('open');
   $('is-closed').onclick = () => openIssues('closed');   // event never reaches the arg
 
-  setBar([
-    { label:'Back',      onClick:() => loadTree(S.path) },
-    { label:'New issue', onClick:newIssueSheet, solid:true, grow:true }
-  ]);
+  const issBar = [{ label:'Back', onClick:() => loadTree(S.path), solid:!S.canPush, grow:!S.canPush }];
+  if (S.canPush) issBar.push({ label:'New issue', onClick:newIssueSheet, solid:true, grow:true });
+  setBar(issBar);
 
   try {
     const all = await api.issues(S.repo.owner, S.repo.name, state);
@@ -7280,12 +7310,61 @@ window.addEventListener('beforeunload', e => {
    quotes, links, images, rules, tables. Everything is escaped first, so a file
    containing raw HTML is shown, never executed.
    ──────────────────────────────────────────────────────────────────────── */
+/* ── A deliberately small, safe HTML subset for markdown ──────────────────
+   READMEs routinely contain real HTML — <picture>, <img>, badges, <details>.
+   Escaping everything (the old behaviour) dumped that markup on screen as
+   text. Rendering it blindly would be an XSS hole, especially now that you can
+   browse strangers' repos. So: drop dangerous elements entirely, escape the
+   rest, then re-enable a whitelist of tags with a whitelist of attributes, and
+   only http(s) URLs. */
+const MD_TAGS = new Set(['a','img','picture','source','br','hr','b','strong','i','em','u','s','del',
+  'code','pre','kbd','sub','sup','details','summary','p','div','span','center','small','blockquote',
+  'h1','h2','h3','h4','h5','h6','ul','ol','li','table','thead','tbody','tr','td','th','caption']);
+const MD_ATTRS = new Set(['href','src','srcset','alt','title','media','align','width','height','colspan','rowspan']);
+
+function safeUrl(u){
+  const v = String(u).trim();
+  return /^(https?:\/\/|\/|#|mailto:)/i.test(v) ? v : '#';
+}
+function mdAttrs(raw){
+  let out = '';
+  const re = /([a-zA-Z-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g;
+  let m;
+  while ((m = re.exec(raw))) {
+    const name = m[1].toLowerCase();
+    if (!MD_ATTRS.has(name)) continue;            // drops every on* handler, style, etc.
+    let val = (m[2] ?? m[3] ?? m[4] ?? '');
+    if (name === 'href' || name === 'src' || name === 'srcset') val = safeUrl(val);
+    out += ` ${name}="${val.replace(/"/g, '&quot;')}"`;
+  }
+  return out;
+}
+function unescapeSafeHtml(escaped){
+  return escaped.replace(/&lt;(\/?)([a-zA-Z][a-zA-Z0-9]*)((?:[^&]|&(?!gt;))*?)(\/?)&gt;/g,
+    (whole, slash, tag, attrs, selfClose) => {
+      const t = tag.toLowerCase();
+      if (!MD_TAGS.has(t)) return whole;                        // leave unknown tags escaped
+      if (slash) return `</${t}>`;
+      const a = attrs ? mdAttrs(attrs.replace(/&quot;/g, '"').replace(/&#39;/g, "'")) : '';
+      const target = t === 'a' ? ' target="_blank" rel="noopener"' : '';
+      return `<${t}${a}${target}${selfClose ? '/' : ''}>`;
+    });
+}
+
 function markdown(src){
+  // Strip elements that must never survive, content and all.
+  src = String(src).replace(/<(script|style|iframe|object|embed|form|link|meta)[\s\S]*?<\/\1\s*>/gi, '')
+                   .replace(/<(script|style|iframe|object|embed|form|link|meta)\b[^>]*\/?>/gi, '');
+
   const blocks = [];   // fenced code is lifted out before anything else touches it
   let t = esc(src).replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
     blocks.push(`<pre><code>${code.replace(/\n$/, '')}</code></pre>`);
     return '\u0000' + (blocks.length - 1) + '\u0000';
   });
+
+  // Bring back the safe HTML the README actually meant, plus common entities.
+  t = unescapeSafeHtml(t)
+        .replace(/&amp;(nbsp|amp|lt|gt|quot|#39|mdash|ndash|hellip|times|copy|reg);/g, '&$1;');
 
   const inline = x => x
     .replace(/`([^`]+)`/g, '<code>$1</code>')
@@ -7344,6 +7423,13 @@ function markdown(src){
     }
 
     closeList();
+    // A line that is just block-level HTML (<picture>, <details>, </a>, a badge
+    // link, …) is emitted as-is; wrapping it in <p> would break the markup.
+    if (/^\s*<\/?(?:picture|source|details|summary|div|p|table|thead|tbody|tr|td|th|ul|ol|li|blockquote|center|h[1-6]|img|a|br|hr)\b[^>]*>\s*$/i.test(line)
+        || /^\s*<[a-zA-Z][^>]*>[\s\S]*<\/[a-zA-Z][a-zA-Z0-9]*>\s*$/.test(line)) {
+      out.push(line);
+      return;
+    }
     out.push(`<p>${inline(line)}</p>`);
   });
   closeList();
