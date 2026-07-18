@@ -1698,6 +1698,10 @@ async function commitFiles(entries, message, onProgress){
 
     if (e.delete) {
       tree.push({ path: e.path, mode: '100644', type: 'blob', sha: null });
+    } else if (e.sha) {
+      // A move/copy: point the new path at a blob that already exists. No
+      // upload, no download — git just references the same object.
+      tree.push({ path: e.path, mode: e.mode || '100644', type: 'blob', sha: e.sha });
     } else {
       // b64 is already here for files the browser read; for a folder picked through
       // Android it is fetched now, one file at a time.
@@ -6664,15 +6668,100 @@ async function doUpload(entries){
    ------------------------------------------------------------ */
 function rowMenu(it){
   const isDir = it.type === 'dir';
+  const parent = it.path.includes('/') ? it.path.split('/').slice(0, -1).join('/') : '';
   sheet(it.name, `
     <div class="overwrite">${it.path}${isDir ? '/' : ''}</div>
     <div class="sheetlist">
+      <button id="m-move">Move or rename<small>${isDir ? 'Move the whole folder' : 'Change its path'}</small></button>
+      ${isDir ? `<button id="m-flatten">Move contents out<small>Into ${parent ? esc(parent) + '/' : 'the repository root'}, then drop the folder</small></button>` : ''}
       <button id="m-del">Delete ${isDir ? 'folder' : 'file'}<small>${
         isDir ? 'Everything inside it goes too' : 'Commits the removal to ' + S.branch
       }</small></button>
     </div>
     <button class="btn wide" onclick="closeSheet()">Cancel</button>
-  `, () => { $('m-del').onclick = () => doDelete(it); });
+  `, () => {
+    $('m-del').onclick = () => doDelete(it);
+    $('m-move').onclick = () => moveSheet(it);
+    if ($('m-flatten')) $('m-flatten').onclick = () => doMove(it, parent, true);
+  });
+}
+
+/* ── Move / rename ────────────────────────────────────────────────────────
+   Git has no rename: a move is "write the blob at the new path, remove the old
+   one" in a single commit. Because the blob already exists we only pass its
+   sha, so even a large folder moves instantly — nothing is re-uploaded. */
+function moveSheet(it){
+  const isDir = it.type === 'dir';
+  sheet('Move ' + it.name, `
+    <p class="hint" style="margin-top:0">New path for this ${isDir ? 'folder' : 'file'}. Type a slash to nest it; leave it empty to move to the repository root.</p>
+    <div class="field">
+      <input type="text" id="mv-path" value="${esc(it.path)}" spellcheck="false"
+             autocapitalize="off" autocorrect="off" autocomplete="off">
+    </div>
+    <button class="btn solid wide" id="mv-go">Move</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => {
+    $('mv-go').onclick = () => {
+      const dest = $('mv-path').value.trim().replace(/^\/+|\/+$/g, '');
+      if (dest === it.path) { toast('That is the same path.'); return; }
+      doMove(it, dest, false);
+    };
+  });
+}
+
+/* dest: for a file, the new full path. For a folder, the new folder path — or,
+   when flatten is true, the folder its contents should be lifted into. */
+async function doMove(it, dest, flatten){
+  const isDir = it.type === 'dir';
+  const o = S.repo.owner, r = S.repo.name;
+  const btn = $('mv-go') || $('m-flatten');
+  busy(btn, true, 'Moving…');
+  try {
+    const head = (await api.ref(o, r, S.branch)).object.sha;
+    const root = (await api.commit(o, r, head)).tree.sha;
+    const full = await api.treeRec(o, r, root);
+
+    const entries = [];
+    let msg;
+
+    if (isDir) {
+      const from = it.path + '/';
+      const blobs = full.tree.filter(n => n.type === 'blob' && n.path.startsWith(from));
+      if (!blobs.length) throw new Error('That folder has no files in it.');
+
+      const baseDest = flatten ? dest : dest;          // where the files land
+      blobs.forEach(n => {
+        const rest = n.path.slice(from.length);        // path inside the folder
+        const tail = flatten ? rest : rest;
+        const to = (baseDest ? baseDest + '/' : '') + tail;
+        if (to === n.path) return;                     // already there
+        entries.push({ path: to, sha: n.sha, mode: n.mode });
+        entries.push({ path: n.path, delete: true });
+      });
+      if (!entries.length) throw new Error('Everything is already at that path.');
+      msg = flatten
+        ? 'Move contents of ' + it.path + '/ to ' + (dest || 'root')
+        : 'Move ' + it.path + '/ to ' + (dest || 'root') + '/';
+    } else {
+      const node = full.tree.find(n => n.type === 'blob' && n.path === it.path);
+      if (!node) throw new Error('Could not find that file in the tree.');
+      if (!dest) throw new Error('Give the file a name.');
+      entries.push({ path: dest, sha: node.sha, mode: node.mode });
+      entries.push({ path: it.path, delete: true });
+      msg = 'Move ' + it.path + ' to ' + dest;
+    }
+
+    const n = entries.filter(e => !e.delete).length;
+    await commitFiles(entries, msg);
+    closeSheet();
+    toast('Moved ' + n + ' file' + (n === 1 ? '' : 's'));
+    await loadTree(S.path);
+  } catch (e) {
+    toast(e.message, 6000);
+  } finally {
+    busy(btn, false);
+  }
 }
 
 async function doDelete(it){
