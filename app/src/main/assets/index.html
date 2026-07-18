@@ -355,6 +355,26 @@ input.masked.plain{ -webkit-text-security:none; letter-spacing:0; }
 .listhead{ font-size:11px; font-weight:600; color:var(--fg-muted); text-transform:uppercase; letter-spacing:.05em; margin:16px 0 6px; padding:0 2px; }
 .listhead:first-child{ margin-top:2px; }
 
+/* Tree multi-select */
+.rowpick{ background:none; border:0; padding:0 4px 0 10px; cursor:pointer; display:flex; align-items:center; flex:none; }
+.rowpick .box{ width:15px; height:15px; border:1px solid var(--border-lit); border-radius:3px; display:block; }
+.rowpick.on .box{ background:var(--accent); border-color:var(--accent); box-shadow:inset 0 0 0 2px var(--overlay); }
+#selbar{
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  background:var(--inset); border:1px solid var(--border); border-radius:var(--r);
+  padding:8px 10px; margin-bottom:10px;
+}
+#selbar .selcount{ font-size:12px; color:var(--fg-muted); font-family:var(--mono); margin-right:auto; }
+
+/* Discover: search-mode tabs and the live status text */
+.dctabs{ display:flex; align-items:center; gap:8px; margin:-4px 0 12px; }
+.dctab{
+  background:none; border:1px solid var(--border-lit); border-radius:2em;
+  color:var(--fg-muted); font:inherit; font-size:12px; padding:4px 12px; cursor:pointer;
+}
+.dctab.on{ color:var(--fg); border-color:var(--accent); background:rgba(56,139,253,.12); }
+.dcstate{ margin-left:auto; font-size:11px; color:var(--fg-subtle); font-family:var(--mono); }
+
 /* Commit CI status mark in the commit bar */
 .cistate{ font-family:var(--mono); font-weight:700; flex:none; }
 
@@ -1078,6 +1098,7 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
     <section class="view" id="v-repos">
       <h1>Repositories</h1>
       <div class="reptop">
+        <button class="btn small" id="go-discover">Discover</button>
         <button class="btn small" id="go-notes">Notifications</button>
         <button class="btn small" id="go-gists">Gists</button>
       </div>
@@ -1095,6 +1116,7 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
 
       <div class="repolayout">
         <div class="repomain">
+          <div id="selbar" style="display:none"></div>
           <div class="filebox">
             <div class="commitbar" id="commitbar"></div>
             <div id="treelist"></div>
@@ -1192,6 +1214,7 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
     <section class="view" id="v-settings"></section>
     <section class="view" id="v-profile"></section>
     <section class="view" id="v-allsearch"></section>
+    <section class="view" id="v-discover"></section>
 
 
 
@@ -1562,6 +1585,14 @@ const api = {
   searchAll: (user, q) =>
                gh(`/search/code?q=${encodeURIComponent(q + ` user:${user}`)}&per_page=50`),
 
+  // Discover: search every public repository, and find people.
+  searchRepos: (q, sort) =>
+               gh(`/search/repositories?q=${encodeURIComponent(q)}${sort ? '&sort=' + sort : ''}&per_page=30`),
+  searchUsers: (q) =>
+               gh(`/search/users?q=${encodeURIComponent(q)}&per_page=20`),
+  userRepos:   (login) =>
+               gh(`/users/${encodeURIComponent(login)}/repos?per_page=100&sort=updated`),
+
   /* Actions. The runs list is how the app watches itself being built. */
   runs:      (o, r, status) => gh(`/repos/${o}/${r}/actions/runs?per_page=30`
                                  + (status ? `&status=${status}` : '')),
@@ -1773,6 +1804,7 @@ window.appBack = () => {
     case 'allsearch':
     case 'notes':
     case 'gists':
+    case 'discover':
       openRepos();
       return true;
 
@@ -2227,8 +2259,132 @@ async function openAllSearch(){
   setTimeout(() => $('as-q').focus(), 60);
 }
 
-/* Delete a repository, with GitHub's own safeguard: you must type the name.
-   There is no undo, so the friction is deliberate. */
+/* ── Discover: search every public repository, live ───────────────────────
+   Results arrive as you type. GitHub's search API allows roughly 10 requests a
+   minute, so this debounces hard (450ms), ignores queries under 2 characters,
+   and drops stale responses — otherwise a fast typist would burn the whole
+   budget in one word and get nothing but 403s. */
+let DISC = { seq: 0, timer: null, mode: 'repos' };
+
+async function openDiscover(){
+  show('discover');
+  const v = $('v-discover');
+  v.innerHTML = `
+    <h1 style="padding-left:0">Discover</h1>
+    <div class="field">
+      <input type="text" id="dc-q" placeholder="Search public repositories…"
+             spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off">
+    </div>
+    <div class="dctabs">
+      <button class="dctab on" data-m="repos">Repositories</button>
+      <button class="dctab" data-m="users">People</button>
+      <span class="dcstate" id="dc-state"></span>
+    </div>
+    <div id="dc-results"><div class="empty">Start typing to search all of GitHub.</div></div>`;
+  setBar([{ label:'Back', onClick:openRepos, solid:true }]);
+
+  v.querySelectorAll('.dctab').forEach(t => t.onclick = () => {
+    v.querySelectorAll('.dctab').forEach(x => x.classList.remove('on'));
+    t.classList.add('on');
+    DISC.mode = t.dataset.m;
+    runDiscover(true);
+  });
+
+  $('dc-q').addEventListener('input', () => runDiscover(false));
+  $('dc-q').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); runDiscover(true); } });
+  setTimeout(() => $('dc-q').focus(), 60);
+}
+
+function runDiscover(now){
+  clearTimeout(DISC.timer);
+  const go = () => doDiscover();
+  if (now) go(); else DISC.timer = setTimeout(go, 450);   // debounce while typing
+  const q = ($('dc-q') || {}).value || '';
+  if ($('dc-state')) $('dc-state').textContent = q.trim().length >= 2 ? 'searching…' : '';
+}
+
+async function doDiscover(){
+  const box = $('dc-results'); if (!box) return;
+  const q = $('dc-q').value.trim();
+  if (q.length < 2) {
+    box.innerHTML = '<div class="empty">Start typing to search all of GitHub.</div>';
+    if ($('dc-state')) $('dc-state').textContent = '';
+    return;
+  }
+  const seq = ++DISC.seq;                      // stale-response guard
+  try {
+    const res = DISC.mode === 'users'
+      ? await api.searchUsers(q)
+      : await api.searchRepos(q, 'stars');
+    if (seq !== DISC.seq) return;              // a newer query already went out
+    if ($('dc-state')) $('dc-state').textContent = (res.total_count || 0).toLocaleString() + ' found';
+
+    const items = res.items || [];
+    if (!items.length) { box.innerHTML = '<div class="empty">Nothing matched.</div>'; return; }
+
+    box.innerHTML = DISC.mode === 'users' ? renderPeople(items) : renderFoundRepos(items);
+
+    box.querySelectorAll('[data-i]').forEach(b => b.onclick = () => {
+      const it = items[+b.dataset.i];
+      if (DISC.mode === 'users') openUserRepos(it.login);
+      else openRepo({
+        owner: it.owner.login, name: it.name,
+        default_branch: it.default_branch || 'main', private: it.private
+      });
+    });
+  } catch (e) {
+    if (seq !== DISC.seq) return;
+    if ($('dc-state')) $('dc-state').textContent = '';
+    box.innerHTML = `<div class="empty">${esc(e.status === 403
+      ? 'GitHub limits search to about 10 requests a minute. Pause a moment and keep typing.'
+      : e.message)}</div>`;
+  }
+}
+
+function renderFoundRepos(items){
+  const num = n => (n || 0).toLocaleString();
+  return `<div class="filebox">${items.map((r, i) => `
+    <button class="rowmain" data-i="${i}" style="width:100%;border-top:1px solid var(--border)">
+      <span class="body" style="flex:1;min-width:0;text-align:left">
+        <span class="name">${esc(r.full_name)}</span>
+        ${r.description ? `<span class="sub" style="display:block;color:var(--fg-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.description)}</span>` : ''}
+        <span class="sub" style="display:block;color:var(--fg-subtle);font-size:11px;font-family:var(--mono)">
+          ${num(r.stargazers_count)} stars${r.language ? ' · ' + esc(r.language) : ''}${r.fork ? ' · fork' : ''}
+        </span>
+      </span>
+    </button>`).join('')}</div>`;
+}
+
+function renderPeople(items){
+  return `<div class="filebox">${items.map((u, i) => `
+    <button class="rowmain" data-i="${i}" style="width:100%;border-top:1px solid var(--border)">
+      <img src="${esc(u.avatar_url)}&s=64" alt="" class="contrib" style="width:28px;height:28px;margin-right:10px">
+      <span class="body" style="flex:1;min-width:0;text-align:left">
+        <span class="name">${esc(u.login)}</span>
+        <span class="sub" style="display:block;color:var(--fg-subtle);font-size:11px">${esc(u.type || 'User')}</span>
+      </span>
+    </button>`).join('')}</div>`;
+}
+
+/* Browse one person's public repositories. */
+async function openUserRepos(login){
+  show('discover');
+  const v = $('v-discover');
+  v.innerHTML = `<h1 style="padding-left:0">${esc(login)}</h1><div class="empty">Loading…</div>`;
+  setBar([{ label:'Back', onClick:openDiscover, solid:true }]);
+  try {
+    const repos = await api.userRepos(login);
+    if (!repos.length) { v.innerHTML = `<h1 style="padding-left:0">${esc(login)}</h1><div class="empty">No public repositories.</div>`; return; }
+    v.innerHTML = `<h1 style="padding-left:0">${esc(login)}</h1>` + renderFoundRepos(repos);
+    v.querySelectorAll('[data-i]').forEach(b => b.onclick = () => {
+      const r = repos[+b.dataset.i];
+      openRepo({ owner: r.owner.login, name: r.name,
+                 default_branch: r.default_branch || 'main', private: r.private });
+    });
+  } catch (e) {
+    v.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
 function deleteRepoConfirm(owner, name){
   sheet('Delete repository', `
     <div class="overwrite" style="border-color:var(--red)">
@@ -2593,9 +2749,28 @@ function renderTree(items){
 
   {
     list.innerHTML = '';
+    if (!S.sel) S.sel = new Set();
+    // Selection only makes sense within one directory; reset when we move.
+    if (S.selPath !== S.path) { S.sel.clear(); S.selPath = S.path; }
+
     items.forEach(it => {
       const row = document.createElement('div');
       row.className = 'row' + (it.type === 'dir' ? ' dir' : '');
+
+      // Tap the checkbox to select; everything else behaves as before.
+      const pick = document.createElement('button');
+      pick.className = 'rowpick' + (S.sel.has(it.path) ? ' on' : '');
+      pick.innerHTML = '<span class="box"></span>';
+      pick.setAttribute('aria-label', 'Select ' + it.name);
+      pick.onclick = e => {
+        e.stopPropagation();
+        S.selItems = S.selItems || {};
+        S.selItems[it.path] = it;
+        if (S.sel.has(it.path)) S.sel.delete(it.path);
+        else S.sel.add(it.path);
+        pick.classList.toggle('on');
+        paintSelBar();
+      };
 
       const b = document.createElement('button');
       b.className = 'rowmain';
@@ -2611,14 +2786,131 @@ function renderTree(items){
       m.setAttribute('aria-label', 'Actions for ' + it.name);
       m.onclick = () => rowMenu(it);
 
+      row.appendChild(pick);
       row.appendChild(b);
       row.appendChild(m);
       list.appendChild(row);
     });
+    paintSelBar();
     paintCommitBar();
     paintReadme(items);
     if (!S.path) paintAbout();           // GitHub shows the About sidebar only at repo root
     else $('about').innerHTML = '';
+  }
+}
+
+/* ── Batch actions on the selected rows ───────────────────────────────────
+   The move engine already commits many paths at once, so selecting several
+   files and moving or deleting them is one commit, not one per file. */
+function paintSelBar(){
+  const bar = $('selbar');
+  if (!bar) return;
+  const n = S.sel ? S.sel.size : 0;
+  if (!n) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+  bar.style.display = 'flex';
+  bar.innerHTML = `
+    <span class="selcount">${n} selected</span>
+    <button class="btn small" id="sel-move">Move…</button>
+    <button class="btn small danger" id="sel-del">Delete</button>
+    <button class="btn small" id="sel-none">Clear</button>`;
+  $('sel-none').onclick = () => { S.sel.clear(); loadTree(S.path); };
+  $('sel-move').onclick = selMoveSheet;
+  $('sel-del').onclick  = selDelete;
+}
+
+function selectedItems(){
+  return [...S.sel].map(p => (S.selItems || {})[p]).filter(Boolean);
+}
+
+function selMoveSheet(){
+  const items = selectedItems();
+  sheet('Move ' + items.length + ' item' + (items.length === 1 ? '' : 's'), `
+    <p class="hint" style="margin-top:0">Destination folder. Leave it empty for the repository root; folders are created as needed.</p>
+    <div class="field">
+      <input type="text" id="sm-dest" placeholder="e.g. src/utils" value="${esc(S.path)}"
+             spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off">
+    </div>
+    <button class="btn solid wide" id="sm-go">Move</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => { $('sm-go').onclick = () => selDoMove(items, $('sm-dest').value.trim().replace(/^\/+|\/+$/g, '')); });
+}
+
+async function selDoMove(items, dest){
+  const o = S.repo.owner, r = S.repo.name;
+  const btn = $('sm-go');
+  busy(btn, true, 'Moving…');
+  try {
+    const head = (await api.ref(o, r, S.branch)).object.sha;
+    const root = (await api.commit(o, r, head)).tree.sha;
+    const full = await api.treeRec(o, r, root);
+    const entries = [];
+
+    items.forEach(it => {
+      if (it.type === 'dir') {
+        const from = it.path + '/';
+        full.tree.filter(n => n.type === 'blob' && n.path.startsWith(from)).forEach(n => {
+          const to = (dest ? dest + '/' : '') + it.name + '/' + n.path.slice(from.length);
+          if (to === n.path) return;
+          entries.push({ path: to, sha: n.sha, mode: n.mode });
+          entries.push({ path: n.path, delete: true });
+        });
+      } else {
+        const node = full.tree.find(n => n.type === 'blob' && n.path === it.path);
+        if (!node) return;
+        const to = (dest ? dest + '/' : '') + it.name;
+        if (to === node.path) return;
+        entries.push({ path: to, sha: node.sha, mode: node.mode });
+        entries.push({ path: node.path, delete: true });
+      }
+    });
+
+    if (!entries.length) throw new Error('Everything is already at that path.');
+    const moved = entries.filter(e => !e.delete).length;
+    await commitFiles(entries, 'Move ' + moved + ' file' + (moved === 1 ? '' : 's') + ' to ' + (dest || 'root'));
+    S.sel.clear();
+    closeSheet();
+    toast('Moved ' + moved + ' file' + (moved === 1 ? '' : 's'));
+    await loadTree(S.path);
+  } catch (e) {
+    toast(e.message, 6000);
+  } finally {
+    busy(btn, false);
+  }
+}
+
+async function selDelete(){
+  const items = selectedItems();
+  const names = items.map(i => i.name).join(', ');
+  if (!confirm('Delete ' + items.length + ' item' + (items.length === 1 ? '' : 's') + '?\n\n' + names + '\n\nThis is committed to ' + S.branch + '.')) return;
+  const o = S.repo.owner, r = S.repo.name;
+  const btn = $('sel-del');
+  busy(btn, true, 'Deleting…');
+  try {
+    const head = (await api.ref(o, r, S.branch)).object.sha;
+    const root = (await api.commit(o, r, head)).tree.sha;
+    const full = await api.treeRec(o, r, root);
+    const entries = [];
+
+    items.forEach(it => {
+      if (it.type === 'dir') {
+        const from = it.path + '/';
+        full.tree.filter(n => n.type === 'blob' && n.path.startsWith(from))
+          .forEach(n => entries.push({ path: n.path, delete: true }));
+      } else {
+        entries.push({ path: it.path, delete: true });
+      }
+    });
+
+    if (!entries.length) throw new Error('Nothing to delete.');
+    await commitFiles(entries, 'Delete ' + entries.length + ' file' + (entries.length === 1 ? '' : 's'));
+    S.sel.clear();
+    toast('Deleted ' + entries.length + ' file' + (entries.length === 1 ? '' : 's'));
+    await loadTree(S.path);
+  } catch (e) {
+    toast(e.message, 6000);
+  } finally {
+    busy(btn, false);
   }
 }
 
@@ -6146,6 +6438,7 @@ async function openBlame(){
 /* Static wiring for the new surfaces. */
 $('go-notes').onclick  = openNotes;
 $('go-gists').onclick  = openGists;
+$('go-discover').onclick = openDiscover;
 $('findq').addEventListener('input', runFind);
 $('findprev').onclick  = () => findStep(-1);
 $('findnext').onclick  = () => findStep(1);
