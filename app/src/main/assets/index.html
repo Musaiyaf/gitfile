@@ -385,6 +385,12 @@ input.masked.plain{ -webkit-text-security:none; letter-spacing:0; }
 }
 /* About panel action row */
 .abacts{ display:flex; gap:8px; flex-wrap:wrap; }
+.forkinfo{
+  font-size:12px; color:var(--fg); line-height:1.5;
+  background:var(--inset); border:1px solid var(--border);
+  border-radius:var(--r); padding:10px 12px;
+}
+.forkinfo .dim{ color:var(--fg-muted); font-family:var(--mono); font-size:11px; }
 
 /* Insights / Security hubs: sub-navigation, inline charts */
 .hubnav{ display:flex; gap:6px; overflow-x:auto; margin:-4px 0 14px; padding-bottom:4px; }
@@ -557,6 +563,10 @@ body.theme-aurora{
 .md table{ border-collapse:collapse; margin-bottom:16px; font-size:14px; display:block; overflow-x:auto; }
 .md th,.md td{ border:1px solid var(--border); padding:6px 13px; }
 .md tr:nth-child(2n){ background:var(--inset); }
+
+/* Monaco fills the same box the built-in editor uses. */
+#monaco{ position:absolute; inset:0; }
+#edwrap:has(#monaco[style*="block"]) #gut{ display:none; }
 
 /* Boot splash — just the GitHub mark, held briefly on launch. */
 .boot{ min-height:80vh; display:flex; align-items:center; justify-content:center; }
@@ -1208,6 +1218,7 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
         <div id="gut" aria-hidden="true"></div>
         <pre id="hl" aria-hidden="true"><code></code></pre>
         <textarea id="editor" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"></textarea>
+        <div id="monaco" style="display:none"></div>
       </div>
       <div id="preview" class="md" style="display:none"></div>
       <div id="imgview" style="display:none"></div>
@@ -1664,6 +1675,9 @@ const api = {
   watch:      (o, r)       => gh(`/repos/${o}/${r}/subscription`, { method:'PUT', body:{ subscribed:true, ignored:false } }),
   unwatch:    (o, r)       => gh(`/repos/${o}/${r}/subscription`, { method:'DELETE' }),
   fork:       (o, r, body) => gh(`/repos/${o}/${r}/forks`, { method:'POST', body: body || {} }),
+  // Pull the upstream's commits into a fork's branch — GitHub does the merge.
+  mergeUpstream: (o, r, branch) =>
+                 gh(`/repos/${o}/${r}/merge-upstream`, { method:'POST', body:{ branch } }),
 
   // Commit statuses (the combined CI state for a ref).
   commitStatus: (o, r, ref) => gh(`/repos/${o}/${r}/commits/${ref}/status`),
@@ -1842,6 +1856,9 @@ function show(view){
   // A run screen left behind would go on polling GitHub every four seconds for
   // as long as the app is open. Stop it the moment we navigate away.
   if (view !== 'run' && S.poll) { clearTimeout(S.poll); S.poll = null; }
+
+  // Monaco is heavy; don't leave an instance alive once you leave the file.
+  if (view !== 'file' && monacoEd) unmountMonaco();
 
   document.querySelectorAll('.view').forEach(v => v.classList.remove('on'));
   $('v-' + view).classList.add('on');
@@ -3251,6 +3268,8 @@ async function paintAbout(){
           <span><b>${num(info.forks_count)}</b> forks</span>
         </div>
 
+        <div id="ab-forkinfo"></div>
+
         <div class="abacts">
           <button class="btn small" id="ab-star">Star</button>
           <button class="btn small" id="ab-watch">Watch</button>
@@ -3288,6 +3307,9 @@ async function paintAbout(){
     </div>`;
 
   ABOUT = { key, html };
+  S.forkOf = (info.fork && info.parent)
+    ? { owner: info.parent.owner.login, name: info.parent.name, branch: info.parent.default_branch }
+    : null;
   box.innerHTML = html;
   wireAbout();
 }
@@ -3335,6 +3357,53 @@ function wireAbout(){
   // Fork — what you want the moment someone else's repo turns out to be useful.
   const fb = $('ab-fork');
   if (fb) fb.onclick = forkSheet;
+
+  paintForkStatus();
+}
+
+/* ── Fork status: how far behind upstream, and a one-tap sync ─────────────
+   A fork goes stale as soon as the original moves on. GitHub compares the two
+   for us, and merge-upstream fast-forwards the branch without any local git. */
+async function paintForkStatus(){
+  const box = $('ab-forkinfo');
+  if (!box) return;
+  const p = S.forkOf;
+  if (!p) { box.innerHTML = ''; return; }
+
+  box.innerHTML = `<div class="forkinfo">Forked from <b>${esc(p.owner + '/' + p.name)}</b><br><span class="dim">checking…</span></div>`;
+  try {
+    // Compare upstream's default branch against this fork's current branch.
+    const cmp = await api.compare(p.owner, p.name, p.branch, S.repo.owner + ':' + S.branch);
+    const behind = cmp.behind_by || 0, ahead = cmp.ahead_by || 0;
+    const parts = [];
+    if (ahead)  parts.push(ahead + ' ahead');
+    if (behind) parts.push(behind + ' behind');
+    box.innerHTML = `
+      <div class="forkinfo">
+        Forked from <b>${esc(p.owner + '/' + p.name)}</b><br>
+        <span class="dim">${esc(S.branch)} is ${parts.length ? parts.join(', ') : 'in sync'}</span>
+        ${behind && S.canPush ? '<div style="height:8px"></div><button class="btn small" id="ab-sync">Sync fork</button>' : ''}
+      </div>`;
+    const sb = $('ab-sync');
+    if (sb) sb.onclick = async () => {
+      busy(sb, true, 'Syncing…');
+      try {
+        const res = await api.mergeUpstream(S.repo.owner, S.repo.name, S.branch);
+        toast(res && res.merge_type === 'none'
+          ? 'Already up to date.'
+          : 'Synced with ' + p.owner + '/' + p.name, 5000);
+        ABOUT = { key:null, html:null };      // counts changed
+        await loadTree(S.path);
+      } catch (e) {
+        busy(sb, false);
+        toast(e.status === 409
+          ? 'Sync conflicts with your changes — merge it on github.com.'
+          : e.message, 7000);
+      }
+    };
+  } catch {
+    box.innerHTML = `<div class="forkinfo">Forked from <b>${esc(p.owner + '/' + p.name)}</b></div>`;
+  }
 }
 
 /* Fork a repository into your own account. GitHub builds forks asynchronously,
@@ -3857,6 +3926,176 @@ const MIME  = { png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image
                 webp:'image/webp', bmp:'image/bmp', ico:'image/x-icon', avif:'image/avif' };
 
 /* Which pane of the file view is showing. */
+/* ═══════════════════════════════════════════════════════════════════════
+   MONACO — the editor that powers VS Code
+   Loaded lazily from a CDN the first time you open a file, and only if it is
+   switched on in Settings. Everything else in the app keeps talking to
+   S.buffer, exactly as it did with the textarea: Monaco simply writes into
+   that buffer on every keystroke, so commits, drafts, diffs, dirty-tracking
+   and stats all carry on working untouched.
+
+   The textarea is never removed. If the CDN is unreachable — no signal, or a
+   WebView that blocks it — the app silently falls back to it, which is what
+   keeps gitfile usable offline.
+   ═══════════════════════════════════════════════════════════════════════ */
+const MONACO_KEY = 'gitfile:monaco';
+const MONACO_CDN = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs';
+let MONACO_ON = false;       // user preference
+let monacoLib = null;        // the loaded module
+let monacoEd  = null;        // the editor instance
+let monacoLoading = null;    // in-flight load promise
+
+function monacoLang(path){
+  const ext = (path.split('.').pop() || '').toLowerCase();
+  const map = {
+    js:'javascript', mjs:'javascript', cjs:'javascript', jsx:'javascript',
+    ts:'typescript', tsx:'typescript', json:'json', html:'html', htm:'html',
+    css:'css', scss:'scss', less:'less', md:'markdown', markdown:'markdown',
+    py:'python', java:'java', kt:'kotlin', kts:'kotlin', c:'c', h:'c',
+    cpp:'cpp', cc:'cpp', hpp:'cpp', cs:'csharp', go:'go', rs:'rust',
+    rb:'ruby', php:'php', swift:'swift', dart:'dart', sh:'shell',
+    bash:'shell', zsh:'shell', yml:'yaml', yaml:'yaml', xml:'xml',
+    sql:'sql', ini:'ini', toml:'ini', gradle:'groovy', pro:'ini'
+  };
+  return map[ext] || 'plaintext';
+}
+
+/* Pull Monaco's AMD loader off the CDN once, then require the editor. */
+function loadMonaco(){
+  if (monacoLib) return Promise.resolve(monacoLib);
+  if (monacoLoading) return monacoLoading;
+
+  monacoLoading = new Promise((resolve, reject) => {
+    const fail = e => { monacoLoading = null; reject(e || new Error('Monaco failed to load')); };
+    const s = document.createElement('script');
+    s.src = MONACO_CDN + '/loader.js';
+    s.onerror = () => fail(new Error('Could not reach the CDN'));
+    s.onload = () => {
+      try {
+        window.require.config({ paths: { vs: MONACO_CDN } });
+        window.require(['vs/editor/editor.main'], () => {
+          monacoLib = window.monaco;
+          defineMonacoTheme();
+          resolve(monacoLib);
+        }, fail);
+      } catch (e) { fail(e); }
+    };
+    document.head.appendChild(s);
+    setTimeout(() => { if (!monacoLib) fail(new Error('Timed out reaching the CDN')); }, 20000);
+  });
+  return monacoLoading;
+}
+
+/* gitfile's palette, as a Monaco theme, so the editor matches the app. */
+function defineMonacoTheme(){
+  const css = getComputedStyle(document.documentElement);
+  const v = n => (css.getPropertyValue(n) || '').trim().replace('#', '') || null;
+  try {
+    monacoLib.editor.defineTheme('gitfile', {
+      base: 'vs-dark', inherit: true,
+      rules: [
+        { token:'comment',  foreground: v('--t-com') || '8B949E' },
+        { token:'keyword',  foreground: v('--t-key') || 'FF7B72' },
+        { token:'string',   foreground: v('--t-str') || 'A5D6FF' },
+        { token:'number',   foreground: v('--t-num') || '79C0FF' },
+        { token:'type',     foreground: v('--t-fn')  || 'D2A8FF' },
+        { token:'tag',      foreground: v('--t-tag') || '7EE787' },
+        { token:'attribute.name', foreground: v('--t-att') || '79C0FF' }
+      ],
+      colors: {
+        'editor.background': '#' + (v('--bg') || '000000'),
+        'editor.foreground': '#' + (v('--fg') || 'E6EDF3'),
+        'editorLineNumber.foreground': '#6E7681',
+        'editorGutter.background': '#' + (v('--bg') || '000000'),
+        'editor.lineHighlightBackground': '#' + (v('--inset') || '0A0A0A')
+      }
+    });
+  } catch { /* a theme that won't define is not worth failing the editor over */ }
+}
+
+/* Swap Monaco in for the current file. Resolves false when it can't be used,
+   in which case the caller just keeps the textarea it already set up. */
+async function mountMonaco(text, path, readOnly){
+  if (!MONACO_ON) return false;
+  try {
+    const m = await loadMonaco();
+    const host = $('monaco');
+    if (!host) return false;
+
+    // Hide the hand-rolled editor, show Monaco.
+    $('editor').style.display = 'none';
+    $('hl').style.display = 'none';
+    $('gut').style.display = 'none';
+    host.style.display = 'block';
+
+    const opts = {
+      value: text,
+      language: monacoLang(path),
+      theme: 'gitfile',
+      readOnly: !!readOnly,
+      automaticLayout: true,
+      fontSize: ED_FONT,
+      lineHeight: ED_FONT + 8,
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+      wordWrap: S.wrap ? 'on' : 'off',
+      minimap: { enabled: true, maxColumn: 60 },
+      folding: true,
+      lineNumbers: 'on',
+      renderLineHighlight: 'line',
+      scrollBeyondLastLine: false,
+      smoothScrolling: true,
+      tabSize: 2,
+      // Touch-friendly: bigger hit areas, no distracting rulers.
+      glyphMargin: false,
+      lineDecorationsWidth: 6,
+      lineNumbersMinChars: 3,
+      overviewRulerLanes: 0,
+      scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10 }
+    };
+
+    if (monacoEd) { monacoEd.dispose(); monacoEd = null; }
+    monacoEd = m.editor.create(host, opts);
+
+    // The single point of truth stays S.buffer — mirror every keystroke into
+    // it and run exactly the updates the textarea's input handler ran.
+    monacoEd.onDidChangeModelContent(() => {
+      S.buffer = monacoEd.getValue();
+      paintStats();
+      paintRef();
+      refreshCommitBtn();
+      saveDraftSoon();
+    });
+    return true;
+  } catch (e) {
+    // Offline, blocked, or the CDN is down: fall back without complaint.
+    unmountMonaco();
+    toast('Code editor unavailable — using the built-in editor.', 4000);
+    return false;
+  }
+}
+
+function unmountMonaco(){
+  if (monacoEd) { try { monacoEd.dispose(); } catch {} monacoEd = null; }
+  const host = $('monaco');
+  if (host) { host.innerHTML = ''; host.style.display = 'none'; }
+  $('editor').style.display = 'block';
+  $('hl').style.display = '';
+  $('gut').style.display = '';
+}
+
+/* Keep Monaco in step with the rest of the app. */
+function monacoSetReadOnly(ro){ if (monacoEd) monacoEd.updateOptions({ readOnly: !!ro }); }
+function monacoSetValue(text){ if (monacoEd && monacoEd.getValue() !== text) monacoEd.setValue(text); }
+function monacoRefreshOptions(){
+  if (!monacoEd) return;
+  monacoEd.updateOptions({
+    fontSize: ED_FONT, lineHeight: ED_FONT + 8,
+    wordWrap: S.wrap ? 'on' : 'off'
+  });
+  if (monacoLib) { defineMonacoTheme(); monacoLib.editor.setTheme('gitfile'); }
+}
+const monacoActive = () => !!monacoEd;
+
 function filePane(which){
   $('editor').style.display  = which === 'edit'    ? 'block' : 'none';
   $('preview').style.display = which === 'preview' ? 'block' : 'none';
@@ -3978,6 +4217,10 @@ async function openFile(path){
     paintHL(true);        // immediately on open, not after a debounce
     paintRef();
     readBar();
+
+    // Swap in VS Code's editor if it's switched on; the textarea above stays
+    // as the fallback and is used unchanged when Monaco can't load.
+    mountMonaco(text, f.path, true);
 
     // If the app was closed mid-edit last time, a local draft is waiting. Offer
     // it rather than silently discarding the work — or silently overwriting it.
@@ -4163,6 +4406,9 @@ function enterEdit(restore){
   if (restore != null) {           // restoring a recovered draft
     ed.value = restore; S.buffer = restore;
   }
+  monacoSetReadOnly(false);
+  if (restore != null) monacoSetValue(restore);
+  if (monacoActive()) setTimeout(() => monacoEd.focus(), 60);
   $('draftbar').style.display = 'none';
   const fe = $('fi-edit'); if (fe) fe.style.display = 'none';
   const fd = $('fi-diff'); if (fd) fd.style.display = '';
@@ -4177,6 +4423,8 @@ async function cancelEdit(){
   S.buffer = S.file.text;          // back to the committed content
   ed.value = S.file.text;
   ed.readOnly = true;
+  monacoSetValue(S.file.text);
+  monacoSetReadOnly(true);
   S.editing = false;
   await clearDraft();
   const fe = $('fi-edit'); if (fe) fe.style.display = '';
@@ -4248,6 +4496,7 @@ window.addEventListener('pagehide', flushDraft);
 function commitCleanup(){
   S.editing = false;
   const ed = $('editor'); if (ed) ed.readOnly = true;
+  monacoSetReadOnly(true);
   const fe = $('fi-edit'); if (fe) fe.style.display = '';
   const fd = $('fi-diff'); if (fd) fd.style.display = 'none';
   clearDraft();
@@ -7026,6 +7275,13 @@ function newGistSheet(){
 /* ── In-file find / replace / go-to-line ──────────────────────────────────*/
 let FIND = { q:'', hits:[], idx:-1 };
 function toggleFind(){
+  // Monaco has a far better find/replace than ours — hand over to it.
+  if (monacoActive()) {
+    monacoEd.focus();
+    monacoEd.getAction(S.editing ? 'editor.action.startFindReplaceAction'
+                                 : 'actions.find').run();
+    return;
+  }
   const bar = $('findbar');
   const on = bar.style.display === 'none';
   bar.style.display = on ? 'flex' : 'none';
@@ -7064,6 +7320,14 @@ function gotoHit(){
   paintFind();
 }
 function gotoLine(n){
+  if (monacoActive()) {
+    const total = monacoEd.getModel().getLineCount();
+    const target = Math.max(1, Math.min(n, total));
+    monacoEd.revealLineInCenter(target);
+    monacoEd.setPosition({ lineNumber: target, column: 1 });
+    monacoEd.focus();
+    return;
+  }
   const ed = $('editor');
   const lines = (S.buffer || '').split('\n');
   const target = Math.max(1, Math.min(n, lines.length));
@@ -8497,6 +8761,7 @@ function toggleWrap(){
     el.style.overflowX  = on ? 'hidden'   : 'auto';
   });
   toast(on ? 'Word wrap on.' : 'Word wrap off.');
+  monacoRefreshOptions();
 }
 
 /* ── Editor appearance: font size + syntax theme ──────────────────────────*/
@@ -8519,6 +8784,12 @@ function applyTheme(name){
 
 function editorSheet(){
   sheet('Editor', `
+    <div class="sheetlist">
+      <button id="ed-monaco">Code editor<small>${MONACO_ON
+        ? 'VS Code engine — folding, minimap, IntelliSense. Needs internet on first open.'
+        : 'Built-in editor — lightweight and works offline.'}</small></button>
+    </div>
+    <div style="height:14px"></div>
     <div class="overwrite" style="margin-top:0">Font size <b id="ed-fsval">${ED_FONT}px</b></div>
     <div style="display:flex; gap:10px; margin:10px 0 18px">
       <button class="btn wide" id="ed-fsdown">A −</button>
@@ -8531,11 +8802,25 @@ function editorSheet(){
     <div style="height:6px"></div>
     <button class="btn wide" onclick="closeSheet()">Close</button>
   `, () => {
-    $('ed-fsdown').onclick = () => { applyFont(ED_FONT - 1); $('ed-fsval').textContent = ED_FONT + 'px'; store.set(FONT_KEY, String(ED_FONT)); };
-    $('ed-fsup').onclick   = () => { applyFont(ED_FONT + 1); $('ed-fsval').textContent = ED_FONT + 'px'; store.set(FONT_KEY, String(ED_FONT)); };
+    $('ed-monaco').onclick = async () => {
+      MONACO_ON = !MONACO_ON;
+      await store.set(MONACO_KEY, MONACO_ON ? '1' : '0');
+      closeSheet();
+      if (MONACO_ON) {
+        toast('VS Code editor on. Reopen a file to use it.', 5000);
+        if (S.file && !S.file.binary) mountMonaco(S.buffer, S.file.path, !S.editing);
+      } else {
+        unmountMonaco();
+        if (S.file) { $('editor').value = S.buffer; paintHL(true); }
+        toast('Built-in editor on.');
+      }
+    };
+    $('ed-fsdown').onclick = () => { applyFont(ED_FONT - 1); $('ed-fsval').textContent = ED_FONT + 'px'; store.set(FONT_KEY, String(ED_FONT)); monacoRefreshOptions(); };
+    $('ed-fsup').onclick   = () => { applyFont(ED_FONT + 1); $('ed-fsval').textContent = ED_FONT + 'px'; store.set(FONT_KEY, String(ED_FONT)); monacoRefreshOptions(); };
     $('ed-themes').querySelectorAll('button').forEach(b => b.onclick = () => {
       applyTheme(b.dataset.t);
       store.set(THEME_KEY, ED_THEME);
+      monacoRefreshOptions();
       editorSheet();     // repaint so the marker moves
     });
   });
@@ -8692,6 +8977,7 @@ async function boot(){
   // Editor appearance preferences.
   try { const f = await store.get(FONT_KEY);  if (f) applyFont(parseInt(f, 10)); } catch {}
   try { const t = await store.get(THEME_KEY); if (t) applyTheme(t); } catch {}
+  try { MONACO_ON = (await store.get(MONACO_KEY)) === '1'; } catch {}
   paintRef();
 
   // Hold the splash for a readable minimum so the logo isn't just a flash.
