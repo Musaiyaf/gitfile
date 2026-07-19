@@ -383,6 +383,19 @@ input.masked.plain{ -webkit-text-security:none; letter-spacing:0; }
 /* About panel action row */
 .abacts{ display:flex; gap:8px; flex-wrap:wrap; }
 
+/* Insights / Security hubs: sub-navigation, inline charts */
+.hubnav{ display:flex; gap:6px; overflow-x:auto; margin:-4px 0 14px; padding-bottom:4px; }
+.hubtab{
+  background:none; border:1px solid var(--border-lit); border-radius:2em;
+  color:var(--fg-muted); font:inherit; font-size:12px; padding:4px 12px;
+  cursor:pointer; white-space:nowrap; flex:none;
+}
+.hubtab.on{ color:var(--fg); border-color:var(--accent); background:rgba(56,139,253,.12); }
+.spark{ display:flex; align-items:flex-end; gap:2px; height:56px; margin:8px 0 16px; }
+.spark i{ flex:1; min-width:2px; border-radius:1px; opacity:.85; }
+.minibar{ height:4px; background:var(--subtle); border-radius:2px; margin-top:6px; overflow:hidden; }
+.minibar i{ display:block; height:100%; background:var(--accent); }
+
 /* Commit CI status mark in the commit bar */
 .cistate{ font-family:var(--mono); font-weight:700; flex:none; }
 
@@ -1229,6 +1242,10 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
     <section class="view" id="v-profile"></section>
     <section class="view" id="v-allsearch"></section>
     <section class="view" id="v-discover"></section>
+    <section class="view" id="v-projects"></section>
+    <section class="view" id="v-project"></section>
+    <section class="view" id="v-security"></section>
+    <section class="view" id="v-insights"></section>
 
 
 
@@ -1667,6 +1684,36 @@ const api = {
   // Traffic (needs push access).
   trafficViews:  (o, r)    => gh(`/repos/${o}/${r}/traffic/views`),
   trafficClones: (o, r)    => gh(`/repos/${o}/${r}/traffic/clones`),
+  trafficPaths:  (o, r)    => gh(`/repos/${o}/${r}/traffic/popular/paths`),
+  trafficRefs:   (o, r)    => gh(`/repos/${o}/${r}/traffic/popular/referrers`),
+
+  /* ── Insights ─────────────────────────────────────────────────────────── */
+  community:     (o, r)    => gh(`/repos/${o}/${r}/community/profile`),
+  statsContrib:  (o, r)    => gh(`/repos/${o}/${r}/stats/contributors`),
+  commitActivity:(o, r)    => gh(`/repos/${o}/${r}/stats/commit_activity`),
+  codeFrequency: (o, r)    => gh(`/repos/${o}/${r}/stats/code_frequency`),
+  participation: (o, r)    => gh(`/repos/${o}/${r}/stats/participation`),
+  forks:         (o, r)    => gh(`/repos/${o}/${r}/forks?per_page=50&sort=newest`),
+  sbom:          (o, r)    => gh(`/repos/${o}/${r}/dependency-graph/sbom`),
+
+  /* ── Security and quality ─────────────────────────────────────────────── */
+  dependabotAlerts: (o, r) => gh(`/repos/${o}/${r}/dependabot/alerts?state=open&per_page=50`),
+  codeScanAlerts:   (o, r) => gh(`/repos/${o}/${r}/code-scanning/alerts?state=open&per_page=50`),
+  secretScanAlerts: (o, r) => gh(`/repos/${o}/${r}/secret-scanning/alerts?state=open&per_page=50`),
+  advisories:       (o, r) => gh(`/repos/${o}/${r}/security-advisories?per_page=30`),
+  vulnEnabled:      (o, r) => gh(`/repos/${o}/${r}/vulnerability-alerts`),   // 204 on, 404 off
+  enableVuln:       (o, r) => gh(`/repos/${o}/${r}/vulnerability-alerts`, { method:'PUT' }),
+
+  /* ── Projects (v2 is GraphQL-only; the REST projects API is retired) ──── */
+  repoProjects: (o, r) => gh('/graphql', { method:'POST', body:{
+    query:`query($o:String!,$r:String!){repository(owner:$o,name:$r){projectsV2(first:20,orderBy:{field:UPDATED_AT,direction:DESC}){totalCount nodes{id number title shortDescription closed url updatedAt items{totalCount}}}}}`,
+    variables:{ o, r } }}),
+  myProjects: (login) => gh('/graphql', { method:'POST', body:{
+    query:`query($l:String!){user(login:$l){projectsV2(first:20,orderBy:{field:UPDATED_AT,direction:DESC}){totalCount nodes{id number title shortDescription closed url updatedAt items{totalCount}}}}}`,
+    variables:{ l: login } }}),
+  projectItems: (id) => gh('/graphql', { method:'POST', body:{
+    query:`query($id:ID!){node(id:$id){... on ProjectV2{title url items(first:50){totalCount nodes{id type content{... on Issue{number title state url} ... on PullRequest{number title state url} ... on DraftIssue{title}} fieldValues(first:8){nodes{... on ProjectV2ItemFieldSingleSelectValue{name field{... on ProjectV2SingleSelectField{name}}}}}}}}}}`,
+    variables:{ id } }}),
 
   /* Fire a workflow_dispatch. Needs the token's Actions permission at read AND
      write — read-only is enough to watch runs, not to start one. Returns 204,
@@ -1854,6 +1901,16 @@ window.appBack = () => {
       openPRs();
       return true;
 
+    case 'projects':
+    case 'security':
+    case 'insights':
+      loadTree(S.path);
+      return true;
+
+    case 'project':
+      openProjects();
+      return true;
+
     case 'tree':
       if (S.path) {
         // Up one directory, rather than all the way out of the repo.
@@ -1896,6 +1953,9 @@ const TABS = [
   { id:'issues',  label:'Issues',        go:openIssues },
   { id:'prs',     label:'Pull requests', go:openPRs },
   { id:'actions', label:'Actions',       go:openActions },
+  { id:'projects',label:'Projects',      go:openProjects },
+  { id:'security',label:'Security',      go:openSecurity },
+  { id:'insights',label:'Insights',      go:openInsights },
   { id:'releases',label:'Releases',      go:openReleases },
   { id:'search',  label:'Search',        go:openSearch },
   { id:'log',     label:'History',       go:() => openLog(null) }
@@ -1911,6 +1971,7 @@ function paintTabs(){
   if (here === 'release')  here = 'releases';   // and a release to Releases
   if (here === 'issue')    here = 'issues';     // and an issue to Issues
   if (here === 'settings') here = 'code';       // settings has no tab of its own
+  if (here === 'project')  here = 'projects';   // a board belongs to Projects
 
   t.innerHTML = '';
   TABS.forEach(tab => {
@@ -3251,6 +3312,424 @@ function forkSheet(){
       }
     };
   });
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   INSIGHTS · SECURITY · PROJECTS
+   The three tabs GitHub keeps beside the code. Each is a hub with the same
+   sub-sections the website has, drawn from whatever the API will give us —
+   and honest about the pieces GitHub simply doesn't expose.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+const _n = x => (x == null ? '—' : Number(x).toLocaleString());
+
+/* A tiny inline bar chart: no library, just divs sized by share of the max. */
+function sparkBars(values, colorFor){
+  const max = Math.max(1, ...values.map(v => Math.abs(v)));
+  return `<div class="spark">${values.map((v, i) =>
+    `<i style="height:${Math.max(2, Math.round(Math.abs(v) / max * 100))}%;background:${colorFor ? colorFor(v, i) : 'var(--accent)'}"></i>`
+  ).join('')}</div>`;
+}
+
+function hubNav(items, active){
+  return `<div class="hubnav">${items.map(i =>
+    `<button class="hubtab ${i.id === active ? 'on' : ''}" data-h="${i.id}">${esc(i.label)}</button>`).join('')}</div>`;
+}
+
+/* ── Insights ─────────────────────────────────────────────────────────────*/
+const INSIGHT_SECTIONS = [
+  { id:'pulse',     label:'Pulse' },
+  { id:'contrib',   label:'Contributors' },
+  { id:'community', label:'Community' },
+  { id:'traffic',   label:'Traffic' },
+  { id:'commits',   label:'Commits' },
+  { id:'freq',      label:'Code frequency' },
+  { id:'deps',      label:'Dependency graph' },
+  { id:'forks',     label:'Forks' }
+];
+
+async function openInsights(section){
+  show('insights');
+  const sec = section || 'pulse';
+  const v = $('v-insights');
+  v.innerHTML = `<h1 style="padding-left:0">Insights</h1>${hubNav(INSIGHT_SECTIONS, sec)}<div id="ins-body"><div class="empty">Loading…</div></div>`;
+  setBar([{ label:'Back', onClick:() => loadTree(S.path), solid:true }]);
+  v.querySelectorAll('.hubtab').forEach(b => b.onclick = () => openInsights(b.dataset.h));
+
+  const box = $('ins-body');
+  const o = S.repo.owner, r = S.repo.name;
+  try {
+    if (sec === 'pulse')          await insPulse(box, o, r);
+    else if (sec === 'contrib')   await insContributors(box, o, r);
+    else if (sec === 'community') await insCommunity(box, o, r);
+    else if (sec === 'traffic')   await insTraffic(box, o, r);
+    else if (sec === 'commits')   await insCommits(box, o, r);
+    else if (sec === 'freq')      await insFrequency(box, o, r);
+    else if (sec === 'deps')      await insDeps(box, o, r);
+    else if (sec === 'forks')     await insForks(box, o, r);
+  } catch (e) {
+    box.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+
+async function insPulse(box, o, r){
+  const since = new Date(Date.now() - 7 * 864e5).toISOString();
+  const [commits, part, prs, issues] = await Promise.all([
+    gh(`/repos/${o}/${r}/commits?since=${since}&per_page=100`).catch(() => []),
+    api.participation(o, r).catch(() => null),
+    gh(`/search/issues?q=${encodeURIComponent(`repo:${o}/${r} is:pr updated:>${since.slice(0,10)}`)}&per_page=1`).catch(() => null),
+    gh(`/search/issues?q=${encodeURIComponent(`repo:${o}/${r} is:issue updated:>${since.slice(0,10)}`)}&per_page=1`).catch(() => null)
+  ]);
+  const authors = new Set(commits.map(c => (c.author && c.author.login) || (c.commit.author && c.commit.author.name)));
+  box.innerHTML = `
+    <p class="hint" style="margin-top:0">Activity in the last 7 days.</p>
+    <div class="trow"><span class="tk">Commits</span><span class="tv">${_n(commits.length)}</span></div>
+    <div class="trow"><span class="tk">Authors</span><span class="tv">${_n(authors.size)}</span></div>
+    <div class="trow"><span class="tk">Pull requests touched</span><span class="tv">${prs ? _n(prs.total_count) : '—'}</span></div>
+    <div class="trow"><span class="tk">Issues touched</span><span class="tv">${issues ? _n(issues.total_count) : '—'}</span></div>
+    ${part && part.all ? `<div class="absec">Commits per week · last year</div>${sparkBars(part.all)}` : ''}
+    ${commits.length ? `<div class="absec">Recent commits</div>` + commits.slice(0, 12).map(c =>
+      `<div class="setrow"><div class="lbl">${esc(c.commit.message.split('\n')[0])}</div>
+       <div class="desc">${esc((c.author && c.author.login) || c.commit.author.name)} · ${ago(c.commit.author.date)} ago</div></div>`).join('') : ''}`;
+}
+
+async function insContributors(box, o, r){
+  const list = await api.contributors(o, r);
+  if (!list.length) { box.innerHTML = '<div class="empty">No contributors listed.</div>'; return; }
+  const max = Math.max(...list.map(c => c.contributions));
+  box.innerHTML = list.map(c => `
+    <div class="setrow">
+      <div style="display:flex;align-items:center;gap:10px">
+        <img class="contrib" src="${esc(c.avatar_url)}&s=64" alt="">
+        <div style="flex:1;min-width:0">
+          <div class="lbl">${esc(c.login)}</div>
+          <div class="desc">${_n(c.contributions)} commits</div>
+          <div class="minibar"><i style="width:${Math.round(c.contributions / max * 100)}%"></i></div>
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+async function insCommunity(box, o, r){
+  const p = await api.community(o, r);
+  const f = p.files || {};
+  const row = (label, present, url) =>
+    `<div class="trow"><span class="tk">${label}</span><span class="tv">${
+      present ? (url ? `<a href="${esc(url)}" target="_blank" rel="noopener">present</a>` : 'present') : 'missing'
+    }</span></div>`;
+  box.innerHTML = `
+    <div class="trow"><span class="tk">Health score</span><span class="tv">${_n(p.health_percentage)}%</span></div>
+    ${row('README', f.readme, f.readme && f.readme.html_url)}
+    ${row('License', f.license, f.license && f.license.html_url)}
+    ${row('Contributing', f.contributing, f.contributing && f.contributing.html_url)}
+    ${row('Code of conduct', f.code_of_conduct, f.code_of_conduct && f.code_of_conduct.html_url)}
+    ${row('Security policy', f.security, f.security && f.security.html_url)}
+    ${row('Issue template', f.issue_template, f.issue_template && f.issue_template.html_url)}
+    ${row('PR template', f.pull_request_template, f.pull_request_template && f.pull_request_template.html_url)}
+    <p class="hint">A higher score just means more of these files exist — GitHub uses it as a checklist, not a judgement.</p>`;
+}
+
+async function insTraffic(box, o, r){
+  const [v, c, paths, refs] = await Promise.all([
+    api.trafficViews(o, r).catch(() => null),
+    api.trafficClones(o, r).catch(() => null),
+    api.trafficPaths(o, r).catch(() => []),
+    api.trafficRefs(o, r).catch(() => [])
+  ]);
+  if (!v && !c) { box.innerHTML = '<div class="empty">Traffic needs push access on this repository.</div>'; return; }
+  box.innerHTML = `
+    <p class="hint" style="margin-top:0">Last 14 days.</p>
+    <div class="trow"><span class="tk">Views</span><span class="tv">${v ? _n(v.count) + ' · ' + _n(v.uniques) + ' unique' : '—'}</span></div>
+    ${v && v.views ? sparkBars(v.views.map(d => d.count)) : ''}
+    <div class="trow"><span class="tk">Clones</span><span class="tv">${c ? _n(c.count) + ' · ' + _n(c.uniques) + ' unique' : '—'}</span></div>
+    ${c && c.clones ? sparkBars(c.clones.map(d => d.count), () => 'var(--green-fg)') : ''}
+    ${paths.length ? '<div class="absec">Popular content</div>' + paths.map(p =>
+      `<div class="trow"><span class="tk" style="min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(p.path)}</span><span class="tv">${_n(p.count)}</span></div>`).join('') : ''}
+    ${refs.length ? '<div class="absec">Referring sites</div>' + refs.map(p =>
+      `<div class="trow"><span class="tk">${esc(p.referrer)}</span><span class="tv">${_n(p.count)}</span></div>`).join('') : ''}`;
+}
+
+async function insCommits(box, o, r){
+  const weeks = await api.commitActivity(o, r);
+  if (!weeks || !weeks.length) { box.innerHTML = '<div class="empty">GitHub is still computing these statistics. Try again shortly.</div>'; return; }
+  const total = weeks.reduce((a, w) => a + w.total, 0);
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const perDay = [0,0,0,0,0,0,0];
+  weeks.forEach(w => w.days.forEach((n, i) => perDay[i] += n));
+  box.innerHTML = `
+    <div class="trow"><span class="tk">Commits · last year</span><span class="tv">${_n(total)}</span></div>
+    <div class="absec">Per week</div>
+    ${sparkBars(weeks.map(w => w.total))}
+    <div class="absec">By day of week</div>
+    ${perDay.map((n, i) => `<div class="trow"><span class="tk">${days[i]}</span><span class="tv">${_n(n)}</span></div>`).join('')}`;
+}
+
+async function insFrequency(box, o, r){
+  const rows = await api.codeFrequency(o, r);
+  if (!rows || !rows.length) { box.innerHTML = '<div class="empty">GitHub is still computing these statistics. Try again shortly.</div>'; return; }
+  const adds = rows.reduce((a, w) => a + w[1], 0);
+  const dels = rows.reduce((a, w) => a + w[2], 0);
+  box.innerHTML = `
+    <div class="trow"><span class="tk">Lines added</span><span class="tv" style="color:var(--green-fg)">+${_n(adds)}</span></div>
+    <div class="trow"><span class="tk">Lines removed</span><span class="tv" style="color:var(--red)">-${_n(Math.abs(dels))}</span></div>
+    <div class="absec">Additions per week</div>
+    ${sparkBars(rows.map(w => w[1]), () => 'var(--green-fg)')}
+    <div class="absec">Deletions per week</div>
+    ${sparkBars(rows.map(w => Math.abs(w[2])), () => 'var(--red)')}`;
+}
+
+async function insDeps(box, o, r){
+  try {
+    const res = await api.sbom(o, r);
+    const pkgs = (res.sbom && res.sbom.packages) || [];
+    if (!pkgs.length) { box.innerHTML = '<div class="empty">No dependencies detected.</div>'; return; }
+    box.innerHTML = `<div class="trow"><span class="tk">Packages</span><span class="tv">${_n(pkgs.length)}</span></div>`
+      + pkgs.slice(0, 100).map(p =>
+        `<div class="trow"><span class="tk" style="min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(p.name || '')}</span><span class="tv">${esc(p.versionInfo || '')}</span></div>`).join('');
+  } catch (e) {
+    box.innerHTML = `<div class="empty">${esc(e.status === 404
+      ? 'The dependency graph is off for this repository. Enable it in Settings on github.com.'
+      : e.message)}</div>`;
+  }
+}
+
+async function insForks(box, o, r){
+  const forks = await api.forks(o, r);
+  if (!forks.length) { box.innerHTML = '<div class="empty">No forks yet.</div>'; return; }
+  box.innerHTML = `<p class="hint" style="margin-top:0">${_n(forks.length)} fork${forks.length === 1 ? '' : 's'}. Tap one to browse it.</p>`
+    + `<div class="filebox">${forks.map((f, i) => `
+      <button class="rowmain" data-f="${i}" style="width:100%;border-top:1px solid var(--border)">
+        <span class="body" style="flex:1;min-width:0;text-align:left">
+          <span class="name">${esc(f.full_name)}</span>
+          <span class="sub" style="display:block;color:var(--fg-subtle);font-size:11px;font-family:var(--mono)">${_n(f.stargazers_count)} stars · updated ${ago(f.updated_at)} ago</span>
+        </span>
+      </button>`).join('')}</div>`;
+  box.querySelectorAll('[data-f]').forEach(b => b.onclick = () => {
+    const f = forks[+b.dataset.f];
+    openRepo({ owner: f.owner.login, name: f.name, default_branch: f.default_branch || 'main', private: f.private });
+  });
+}
+
+/* ── Security and quality ─────────────────────────────────────────────────*/
+const SEC_SECTIONS = [
+  { id:'overview',  label:'Overview' },
+  { id:'dependabot',label:'Dependabot' },
+  { id:'scanning',  label:'Code scanning' },
+  { id:'secrets',   label:'Secret scanning' },
+  { id:'policy',    label:'Security policy' },
+  { id:'advisories',label:'Advisories' }
+];
+
+async function openSecurity(section){
+  show('security');
+  const sec = section || 'overview';
+  const v = $('v-security');
+  v.innerHTML = `<h1 style="padding-left:0">Security</h1>${hubNav(SEC_SECTIONS, sec)}<div id="sec-body"><div class="empty">Loading…</div></div>`;
+  setBar([{ label:'Back', onClick:() => loadTree(S.path), solid:true }]);
+  v.querySelectorAll('.hubtab').forEach(b => b.onclick = () => openSecurity(b.dataset.h));
+
+  const box = $('sec-body');
+  const o = S.repo.owner, r = S.repo.name;
+  try {
+    if (sec === 'overview')        await secOverview(box, o, r);
+    else if (sec === 'dependabot') await secAlerts(box, o, r, 'dependabot');
+    else if (sec === 'scanning')   await secAlerts(box, o, r, 'scanning');
+    else if (sec === 'secrets')    await secAlerts(box, o, r, 'secrets');
+    else if (sec === 'policy')     await secPolicy(box, o, r);
+    else if (sec === 'advisories') await secAdvisories(box, o, r);
+  } catch (e) {
+    box.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+
+async function secOverview(box, o, r){
+  const [prof, vuln, dep, scan] = await Promise.all([
+    api.community(o, r).catch(() => ({ files:{} })),
+    api.vulnEnabled(o, r).then(() => true).catch(() => false),
+    api.dependabotAlerts(o, r).catch(e => e),
+    api.codeScanAlerts(o, r).catch(e => e)
+  ]);
+  const count = x => Array.isArray(x) ? x.length + ' open' : (x && x.status === 403 ? 'no permission' : 'disabled');
+  box.innerHTML = `
+    <div class="setrow">
+      <div class="lbl">Security policy</div>
+      <div class="desc">${prof.files && prof.files.security ? 'Present — SECURITY.md defines how to report vulnerabilities' : 'Disabled — no SECURITY.md in this repository'}</div>
+      ${!(prof.files && prof.files.security) && S.canPush ? '<div style="height:8px"></div><button class="btn small" id="sec-add">Create SECURITY.md</button>' : ''}
+    </div>
+    <div class="setrow">
+      <div class="lbl">Dependabot alerts</div>
+      <div class="desc">${vuln ? 'Enabled' : 'Disabled'} · ${count(dep)}</div>
+      ${!vuln && S.canPush ? '<div style="height:8px"></div><button class="btn small" id="sec-vuln">Enable Dependabot alerts</button>' : ''}
+    </div>
+    <div class="setrow">
+      <div class="lbl">Code scanning alerts</div>
+      <div class="desc">${count(scan)}${Array.isArray(scan) ? '' : ' — Advanced Security is only available on organisations and public repos'}</div>
+    </div>`;
+  if ($('sec-vuln')) $('sec-vuln').onclick = async () => {
+    try { await api.enableVuln(o, r); toast('Dependabot alerts enabled'); openSecurity('overview'); }
+    catch (e) { toast(e.message, 6000); }
+  };
+  if ($('sec-add')) $('sec-add').onclick = () => addSecurityPolicy();
+}
+
+async function secAlerts(box, o, r, kind){
+  const call = kind === 'dependabot' ? api.dependabotAlerts
+             : kind === 'scanning'   ? api.codeScanAlerts
+             : api.secretScanAlerts;
+  try {
+    const alerts = await call(o, r);
+    if (!alerts.length) { box.innerHTML = '<div class="empty">No open alerts.</div>'; return; }
+    box.innerHTML = alerts.map(a => {
+      const sev = (a.security_advisory && a.security_advisory.severity)
+               || (a.rule && a.rule.severity) || a.secret_type || 'alert';
+      const title = (a.security_advisory && a.security_advisory.summary)
+                 || (a.rule && a.rule.description) || a.secret_type_display_name || 'Alert';
+      const where = (a.dependency && a.dependency.package && a.dependency.package.name)
+                 || (a.most_recent_instance && a.most_recent_instance.location && a.most_recent_instance.location.path)
+                 || '';
+      return `<div class="setrow">
+        <div class="lbl">${esc(title)}</div>
+        <div class="desc">${esc(String(sev))}${where ? ' · ' + esc(where) : ''}</div>
+        ${a.html_url ? `<div style="height:6px"></div><a class="ablink" href="${esc(a.html_url)}" target="_blank" rel="noopener">Open on GitHub</a>` : ''}
+      </div>`;
+    }).join('');
+  } catch (e) {
+    box.innerHTML = `<div class="empty">${esc(
+      e.status === 403 ? 'Your token needs the matching alert permission for this repository.'
+    : e.status === 404 ? 'This feature is not enabled for this repository.'
+    : e.message)}</div>`;
+  }
+}
+
+async function secPolicy(box, o, r){
+  try {
+    const f = await api.contents(o, r, 'SECURITY.md', S.branch);
+    box.innerHTML = `<div class="md">${markdown(b64decode(f.content))}</div>`;
+  } catch {
+    box.innerHTML = `<div class="empty">No SECURITY.md in this repository.</div>`
+      + (S.canPush ? '<div style="height:12px"></div><button class="btn solid wide" id="sp-add">Create SECURITY.md</button>' : '');
+    if ($('sp-add')) $('sp-add').onclick = () => addSecurityPolicy();
+  }
+}
+
+function addSecurityPolicy(){
+  const tpl = `# Security Policy\n\n## Supported versions\n\n| Version | Supported |\n| --- | --- |\n| latest | yes |\n\n## Reporting a vulnerability\n\nPlease report security issues privately by opening a draft security advisory\non this repository, rather than a public issue.\n`;
+  sheet('Create SECURITY.md', `
+    <div class="field"><textarea id="sp-body" rows="10" spellcheck="false">${esc(tpl)}</textarea></div>
+    <button class="btn solid wide" id="sp-go">Commit SECURITY.md</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" onclick="closeSheet()">Cancel</button>
+  `, () => {
+    $('sp-go').onclick = async () => {
+      const btn = $('sp-go'); busy(btn, true, 'Committing…');
+      try {
+        await commitFiles([{ path:'SECURITY.md', b64: b64encode($('sp-body').value) }], 'Add security policy');
+        closeSheet(); toast('SECURITY.md created'); openSecurity('policy');
+      } catch (e) { busy(btn, false); toast(e.message, 6000); }
+    };
+  });
+}
+
+async function secAdvisories(box, o, r){
+  try {
+    const list = await api.advisories(o, r);
+    if (!list.length) { box.innerHTML = '<div class="empty">No security advisories.</div>'; return; }
+    box.innerHTML = list.map(a => `
+      <div class="setrow">
+        <div class="lbl">${esc(a.summary || a.ghsa_id)}</div>
+        <div class="desc">${esc(a.severity || '')} · ${esc(a.state || '')}</div>
+        ${a.html_url ? `<div style="height:6px"></div><a class="ablink" href="${esc(a.html_url)}" target="_blank" rel="noopener">Open on GitHub</a>` : ''}
+      </div>`).join('');
+  } catch (e) {
+    box.innerHTML = `<div class="empty">${esc(e.status === 403
+      ? 'Your token needs Repository security advisories access.' : e.message)}</div>`;
+  }
+}
+
+/* ── Projects (v2) ────────────────────────────────────────────────────────*/
+async function openProjects(){
+  show('projects');
+  const v = $('v-projects');
+  v.innerHTML = `<h1 style="padding-left:0">Projects</h1><div class="empty">Loading…</div>`;
+  setBar([{ label:'Back', onClick:() => loadTree(S.path), solid:true }]);
+  try {
+    const res = await api.repoProjects(S.repo.owner, S.repo.name);
+    if (res.errors && res.errors.length) throw new Error(res.errors[0].message);
+    const node = res.data && res.data.repository && res.data.repository.projectsV2;
+    const list = (node && node.nodes) || [];
+
+    // Also offer your own projects — a repo often has none linked, but you do.
+    let mine = [];
+    try {
+      const m = await api.myProjects((S.user && S.user.login) || '');
+      mine = (m.data && m.data.user && m.data.user.projectsV2 && m.data.user.projectsV2.nodes) || [];
+    } catch {}
+
+    const card = (p, i, src) => `
+      <button class="rowmain" data-p="${i}" data-src="${src}" style="width:100%;border-top:1px solid var(--border)">
+        <span class="body" style="flex:1;min-width:0;text-align:left">
+          <span class="name">${esc(p.title)}${p.closed ? ' · closed' : ''}</span>
+          ${p.shortDescription ? `<span class="sub" style="display:block;color:var(--fg-muted);font-size:11px">${esc(p.shortDescription)}</span>` : ''}
+          <span class="sub" style="display:block;color:var(--fg-subtle);font-size:11px;font-family:var(--mono)">#${p.number} · ${_n(p.items && p.items.totalCount)} items · updated ${ago(p.updatedAt)} ago</span>
+        </span>
+      </button>`;
+
+    v.innerHTML = `<h1 style="padding-left:0">Projects</h1>`
+      + (list.length ? `<div class="listhead">Linked to this repository</div><div class="filebox">${list.map((p, i) => card(p, i, 'repo')).join('')}</div>`
+                     : `<div class="empty">No projects linked to this repository yet.</div>`)
+      + (mine.length ? `<div class="listhead">Your projects</div><div class="filebox">${mine.map((p, i) => card(p, i, 'mine')).join('')}</div>` : '')
+      + `<p class="hint">Projects are created on github.com — the API can read and update boards, but not build one from scratch.</p>`;
+
+    v.querySelectorAll('[data-p]').forEach(b => b.onclick = () => {
+      const p = (b.dataset.src === 'repo' ? list : mine)[+b.dataset.p];
+      openProject(p);
+    });
+  } catch (e) {
+    v.innerHTML = `<h1 style="padding-left:0">Projects</h1><div class="empty">${esc(
+      /scope|permission|forbidden/i.test(e.message)
+        ? 'Your token needs the Projects permission (Read and write) to see project boards.'
+        : e.message)}</div>`;
+  }
+}
+
+async function openProject(p){
+  show('project');
+  const v = $('v-project');
+  v.innerHTML = `<h1 style="padding-left:0">${esc(p.title)}</h1><div class="empty">Loading…</div>`;
+  setBar([
+    { label:'Back',   onClick:openProjects },
+    { label:'GitHub', onClick:() => window.Native ? window.Native.openUrl(p.url) : window.open(p.url, '_blank'), solid:true, grow:true }
+  ]);
+  try {
+    const res = await api.projectItems(p.id);
+    if (res.errors && res.errors.length) throw new Error(res.errors[0].message);
+    const items = ((res.data && res.data.node && res.data.node.items && res.data.node.items.nodes) || []);
+    if (!items.length) { v.innerHTML = `<h1 style="padding-left:0">${esc(p.title)}</h1><div class="empty">This board is empty.</div>`; return; }
+
+    // Group by the first single-select field, which is normally "Status".
+    const groups = {};
+    items.forEach(it => {
+      const fv = (it.fieldValues && it.fieldValues.nodes || []).find(n => n && n.name);
+      const key = fv ? fv.name : 'No status';
+      (groups[key] = groups[key] || []).push(it);
+    });
+
+    v.innerHTML = `<h1 style="padding-left:0">${esc(p.title)}</h1>`
+      + Object.entries(groups).map(([status, list]) => `
+        <div class="listhead">${esc(status)} · ${list.length}</div>
+        <div class="filebox">${list.map(it => {
+          const c = it.content || {};
+          const label = c.title || '(draft)';
+          const meta = c.number ? '#' + c.number + (c.state ? ' · ' + String(c.state).toLowerCase() : '') : it.type.toLowerCase();
+          return `<div class="row"><span class="rowmain" style="cursor:default">
+            <span class="body" style="flex:1;min-width:0;text-align:left">
+              <span class="name">${esc(label)}</span>
+              <span class="sub" style="display:block;color:var(--fg-subtle);font-size:11px;font-family:var(--mono)">${esc(meta)}</span>
+            </span></span></div>`;
+        }).join('')}</div>`).join('');
+  } catch (e) {
+    v.innerHTML = `<h1 style="padding-left:0">${esc(p.title)}</h1><div class="empty">${esc(e.message)}</div>`;
+  }
 }
 
 function paintCrumbs(){
