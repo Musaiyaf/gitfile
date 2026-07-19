@@ -365,6 +365,9 @@ input.masked.plain{ -webkit-text-security:none; letter-spacing:0; }
   padding:8px 10px; margin-bottom:10px;
 }
 #selbar .selcount{ font-size:12px; color:var(--fg-muted); font-family:var(--mono); margin-right:auto; }
+#selbar .btn[disabled]{ opacity:.4; }
+/* Chosen destination in the pull-request sheet */
+.sheetlist button.on{ border-color:var(--accent); background:rgba(56,139,253,.12); color:var(--fg); }
 
 /* Discover: search-mode tabs and the live status text */
 .dctabs{ display:flex; align-items:center; gap:8px; margin:-4px 0 12px; }
@@ -1056,7 +1059,7 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
       <span id="dirty">●</span>
       <span id="quota"></span>
       <button id="queuebadge" style="display:none" aria-label="Sync queued changes"></button>
-      <button id="gear" aria-label="Settings"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 5.6a2.4 2.4 0 1 0 0 4.8 2.4 2.4 0 0 0 0-4.8zm5.9 3.1l1.1.9a.4.4 0 0 1 .1.5l-1 1.7a.4.4 0 0 1-.5.2l-1.4-.5a4.6 4.6 0 0 1-1 .6l-.2 1.5a.4.4 0 0 1-.4.3H8.3a.4.4 0 0 1-.4-.3l-.2-1.5a4.6 4.6 0 0 1-1-.6l-1.4.5a.4.4 0 0 1-.5-.2l-1-1.7a.4.4 0 0 1 .1-.5l1.1-.9a4.7 4.7 0 0 1 0-1.4l-1.1-.9a.4.4 0 0 1-.1-.5l1-1.7a.4.4 0 0 1 .5-.2l1.4.5a4.6 4.6 0 0 1 1-.6l.2-1.5a.4.4 0 0 1 .4-.3h1.9a.4.4 0 0 1 .4.3l.2 1.5c.36.15.7.35 1 .6l1.4-.5a.4.4 0 0 1 .5.2l1 1.7a.4.4 0 0 1-.1.5l-1.1.9a4.7 4.7 0 0 1 0 1.4z"/></svg></button>
+      <button id="gear" aria-label="Settings"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M9.15 1a.5.5 0 0 1 .49.4l.22 1.1a5.5 5.5 0 0 1 1.02.59l1.06-.36a.5.5 0 0 1 .59.22l1.15 2a.5.5 0 0 1-.1.62l-.84.74a5.6 5.6 0 0 1 0 1.18l.84.74a.5.5 0 0 1 .1.62l-1.15 2a.5.5 0 0 1-.59.22l-1.06-.36c-.32.24-.66.44-1.02.59l-.22 1.1a.5.5 0 0 1-.49.4h-2.3a.5.5 0 0 1-.49-.4l-.22-1.1a5.5 5.5 0 0 1-1.02-.59l-1.06.36a.5.5 0 0 1-.59-.22l-1.15-2a.5.5 0 0 1 .1-.62l.84-.74a5.6 5.6 0 0 1 0-1.18l-.84-.74a.5.5 0 0 1-.1-.62l1.15-2a.5.5 0 0 1 .59-.22l1.06.36c.32-.24.66-.44 1.02-.59l.22-1.1a.5.5 0 0 1 .49-.4zM8 5.75a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5z"/></svg></button>
     </div>
     <div class="tabs" id="tabs"></div>
   </div>
@@ -1481,8 +1484,19 @@ async function gh(path, opts = {}){
 function ghMessage(status, data){
   if (status === 401) return 'Token rejected by GitHub' + (data?.message ? ': ' + data.message : '') + '. Check it was pasted in full.';
   if (status === 403 && S.quota === '0') return 'Rate limit reached. It resets within the hour.';
-  if (status === 403) return 'Token lacks permission for this. Contents, Pull requests and Administration all need to be read and write.';
-  if (status === 404) return 'Not found — or the token cannot see this repository.';
+  if (status === 403) {
+    // GitHub usually says exactly what is wrong — "Dependabot alerts are
+    // disabled for this repository", "Advanced Security must be enabled", and
+    // so on. Its message beats any guess we could make, so lead with it.
+    return data?.message
+      ? data.message.replace(/\.$/, '') + '.'
+      : 'Token lacks permission for this. Contents, Pull requests and Administration all need to be read and write.';
+  }
+  if (status === 404) {
+    return data?.message && !/^not found$/i.test(data.message)
+      ? data.message.replace(/\.$/, '') + '.'
+      : 'Not found — or the token cannot see this repository.';
+  }
   if (status === 409) return 'Conflict. The branch moved. Reopen the file to get the current version.';
   if (status === 410) return 'This feature is turned off for the repository.';
   if (status === 422) {
@@ -2909,15 +2923,16 @@ function renderTree(items){
   {
     list.innerHTML = '';
     if (!S.sel) S.sel = new Set();
+    S.treeItems = items;                 // for the "All" button
     // Selection only makes sense within one directory; reset when we move.
-    if (S.selPath !== S.path) { S.sel.clear(); S.selPath = S.path; }
+    if (S.selPath !== S.path) { S.sel.clear(); S.selMode = false; S.selPath = S.path; }
 
     items.forEach(it => {
       const row = document.createElement('div');
       row.className = 'row' + (it.type === 'dir' ? ' dir' : '');
 
-      // Tap the checkbox to select; everything else behaves as before.
-      // Selection exists to move or delete, so it's pointless without write access.
+      // Checkboxes stay out of the way until you ask for them: long-press any
+      // row (or use "Select" in its menu) to enter selection mode.
       const pick = S.canPush ? document.createElement('button') : null;
       if (pick) {
       pick.className = 'rowpick' + (S.sel.has(it.path) ? ' on' : '');
@@ -2925,11 +2940,8 @@ function renderTree(items){
       pick.setAttribute('aria-label', 'Select ' + it.name);
       pick.onclick = e => {
         e.stopPropagation();
-        S.selItems = S.selItems || {};
-        S.selItems[it.path] = it;
-        if (S.sel.has(it.path)) S.sel.delete(it.path);
-        else S.sel.add(it.path);
-        pick.classList.toggle('on');
+        toggleSel(it);
+        pick.classList.toggle('on', S.sel.has(it.path));
         paintSelBar();
       };
       }
@@ -2940,7 +2952,12 @@ function renderTree(items){
         <span class="glyph ${it.type === 'dir' ? 'g-dir' : fileClass(it.name)}">${fileGlyph(it)}</span>
         <span class="name">${it.name}</span>
         <span class="meta">${it.type === 'dir' ? '' : bytes(it.size)}</span>`;
-      b.onclick = () => it.type === 'dir' ? loadTree(it.path) : openFile(it.path);
+      b.onclick = () => {
+        // While selecting, a tap toggles instead of navigating.
+        if (S.selMode) { toggleSel(it); renderTree(items); return; }
+        it.type === 'dir' ? loadTree(it.path) : openFile(it.path);
+      };
+      if (S.canPush) longPress(b, () => { S.selMode = true; toggleSel(it); renderTree(items); });
 
       const m = document.createElement('button');
       m.className = 'rowmenu';
@@ -2948,7 +2965,7 @@ function renderTree(items){
       m.setAttribute('aria-label', 'Actions for ' + it.name);
       m.onclick = () => rowMenu(it);
 
-      if (pick) row.appendChild(pick);
+      if (pick && S.selMode) row.appendChild(pick);
       row.appendChild(b);
       if (S.canPush) row.appendChild(m);
       list.appendChild(row);
@@ -2964,20 +2981,59 @@ function renderTree(items){
 /* ── Batch actions on the selected rows ───────────────────────────────────
    The move engine already commits many paths at once, so selecting several
    files and moving or deleting them is one commit, not one per file. */
+
+/* Long-press: the standard mobile way into selection mode. Fires after 500ms
+   of holding still, and cancels if the finger moves (that's a scroll). */
+function longPress(el, fn){
+  let timer = null, sx = 0, sy = 0;
+  const cancel = () => { clearTimeout(timer); timer = null; };
+  el.addEventListener('touchstart', e => {
+    const t = e.touches[0]; sx = t.clientX; sy = t.clientY;
+    timer = setTimeout(() => { timer = null; fn(); }, 500);
+  }, { passive:true });
+  el.addEventListener('touchmove', e => {
+    const t = e.touches[0];
+    if (Math.abs(t.clientX - sx) > 10 || Math.abs(t.clientY - sy) > 10) cancel();
+  }, { passive:true });
+  el.addEventListener('touchend', cancel);
+  el.addEventListener('touchcancel', cancel);
+  // Mouse equivalent, for the desktop view and browsers.
+  el.addEventListener('contextmenu', e => { e.preventDefault(); fn(); });
+}
+
+function toggleSel(it){
+  S.selItems = S.selItems || {};
+  S.selItems[it.path] = it;
+  if (S.sel.has(it.path)) S.sel.delete(it.path);
+  else S.sel.add(it.path);
+  if (!S.sel.size) S.selMode = false;      // last one deselected: leave the mode
+}
+
+function exitSel(){
+  S.sel.clear();
+  S.selMode = false;
+  loadTree(S.path);
+}
+
 function paintSelBar(){
   const bar = $('selbar');
   if (!bar) return;
   const n = S.sel ? S.sel.size : 0;
-  if (!n) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+  if (!S.selMode) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
   bar.style.display = 'flex';
   bar.innerHTML = `
     <span class="selcount">${n} selected</span>
-    <button class="btn small" id="sel-move">Move…</button>
-    <button class="btn small danger" id="sel-del">Delete</button>
-    <button class="btn small" id="sel-none">Clear</button>`;
-  $('sel-none').onclick = () => { S.sel.clear(); loadTree(S.path); };
-  $('sel-move').onclick = selMoveSheet;
-  $('sel-del').onclick  = selDelete;
+    <button class="btn small" id="sel-all">All</button>
+    <button class="btn small" id="sel-move"${n ? '' : ' disabled'}>Move…</button>
+    <button class="btn small danger" id="sel-del"${n ? '' : ' disabled'}>Delete</button>
+    <button class="btn small" id="sel-none">Done</button>`;
+  $('sel-none').onclick = exitSel;
+  $('sel-all').onclick  = () => {
+    (S.treeItems || []).forEach(it => { S.selItems[it.path] = it; S.sel.add(it.path); });
+    renderTree(S.treeItems || []);
+  };
+  $('sel-move').onclick = () => { if (S.sel.size) selMoveSheet(); };
+  $('sel-del').onclick  = () => { if (S.sel.size) selDelete(); };
 }
 
 function selectedItems(){
@@ -3549,7 +3605,7 @@ async function secOverview(box, o, r){
     api.dependabotAlerts(o, r).catch(e => e),
     api.codeScanAlerts(o, r).catch(e => e)
   ]);
-  const count = x => Array.isArray(x) ? x.length + ' open' : (x && x.status === 403 ? 'no permission' : 'disabled');
+  const count = x => Array.isArray(x) ? x.length + ' open' : 'unavailable';
   box.innerHTML = `
     <div class="setrow">
       <div class="lbl">Security policy</div>
@@ -3558,16 +3614,20 @@ async function secOverview(box, o, r){
     </div>
     <div class="setrow">
       <div class="lbl">Dependabot alerts</div>
-      <div class="desc">${vuln ? 'Enabled' : 'Disabled'} · ${count(dep)}</div>
-      ${!vuln && S.canPush ? '<div style="height:8px"></div><button class="btn small" id="sec-vuln">Enable Dependabot alerts</button>' : ''}
+      <div class="desc">${vuln ? 'Enabled · ' + count(dep) : 'Disabled — this is why the Dependabot tab is empty'}</div>
+      ${S.canPush ? `<div style="height:8px"></div><button class="btn small" id="sec-vuln">${vuln ? 'Disable' : 'Enable'} Dependabot alerts</button>` : ''}
     </div>
     <div class="setrow">
       <div class="lbl">Code scanning alerts</div>
-      <div class="desc">${count(scan)}${Array.isArray(scan) ? '' : ' — Advanced Security is only available on organisations and public repos'}</div>
-    </div>`;
+      <div class="desc">${Array.isArray(scan) ? count(scan) : 'Unavailable — Advanced Security is only offered on organisation and public repositories'}</div>
+    </div>
+    <p class="hint">Dependabot and code scanning are repository features, not token settings — a permission alone will not switch them on.</p>`;
   if ($('sec-vuln')) $('sec-vuln').onclick = async () => {
-    try { await api.enableVuln(o, r); toast('Dependabot alerts enabled'); openSecurity('overview'); }
-    catch (e) { toast(e.message, 6000); }
+    try {
+      if (vuln) { await gh(`/repos/${o}/${r}/vulnerability-alerts`, { method:'DELETE' }); toast('Dependabot alerts disabled'); }
+      else      { await api.enableVuln(o, r); toast('Dependabot alerts enabled'); }
+      openSecurity('overview');
+    } catch (e) { toast(e.message, 6000); }
   };
   if ($('sec-add')) $('sec-add').onclick = () => addSecurityPolicy();
 }
@@ -3594,10 +3654,25 @@ async function secAlerts(box, o, r, kind){
       </div>`;
     }).join('');
   } catch (e) {
-    box.innerHTML = `<div class="empty">${esc(
-      e.status === 403 ? 'Your token needs the matching alert permission for this repository.'
-    : e.status === 404 ? 'This feature is not enabled for this repository.'
-    : e.message)}</div>`;
+    // These almost never fail for the reason people assume. A 403 here usually
+    // means the feature is switched off for the repository, not that the token
+    // is wrong — so show GitHub's own words, then say what actually fixes it.
+    const msg = e.message || '';
+    const off = /disabled|not enabled|must be enabled|advanced security/i.test(msg);
+    let fix = '';
+    if (kind === 'dependabot') {
+      fix = off || e.status === 403 || e.status === 404
+        ? 'Dependabot alerts are switched off for this repository. Turn them on in the <b>Overview</b> tab here, or on github.com under Settings → Advanced Security.'
+        : 'If this persists, add the <b>Dependabot alerts</b> permission (Read) to your token.';
+    } else if (kind === 'scanning') {
+      fix = 'Code scanning needs GitHub Advanced Security, which is only available on organisation-owned and public repositories — not private personal ones. No token permission will change this.';
+    } else {
+      fix = 'Secret scanning is available on public repositories, and on private ones only with Advanced Security. If this repo is public, add the <b>Secret scanning alerts</b> permission (Read) to your token.';
+    }
+    box.innerHTML = `<div class="empty" style="text-align:left">
+        <div style="color:var(--fg-muted);margin-bottom:10px">${esc(msg)}</div>
+        <div>${fix}</div>
+      </div>`;
   }
 }
 
@@ -3641,8 +3716,10 @@ async function secAdvisories(box, o, r){
         ${a.html_url ? `<div style="height:6px"></div><a class="ablink" href="${esc(a.html_url)}" target="_blank" rel="noopener">Open on GitHub</a>` : ''}
       </div>`).join('');
   } catch (e) {
-    box.innerHTML = `<div class="empty">${esc(e.status === 403
-      ? 'Your token needs Repository security advisories access.' : e.message)}</div>`;
+    box.innerHTML = `<div class="empty" style="text-align:left">
+      <div style="color:var(--fg-muted);margin-bottom:10px">${esc(e.message || '')}</div>
+      <div>Repository security advisories are for publishing CVEs about your own project. They aren't available on private repositories — make the repo public, or draft one on github.com under the Security tab.</div>
+    </div>`;
   }
 }
 
@@ -7613,6 +7690,7 @@ function rowMenu(it){
   sheet(it.name, `
     <div class="overwrite">${it.path}${isDir ? '/' : ''}</div>
     <div class="sheetlist">
+      <button id="m-select">Select<small>Pick several files to move or delete together</small></button>
       <button id="m-move">Move or rename<small>${isDir ? 'Move the whole folder' : 'Change its path'}</small></button>
       ${isDir ? `<button id="m-flatten">Move contents out<small>Into ${parent ? esc(parent) + '/' : 'the repository root'}, then drop the folder</small></button>` : ''}
       <button id="m-del">Delete ${isDir ? 'folder' : 'file'}<small>${
@@ -7621,6 +7699,12 @@ function rowMenu(it){
     </div>
     <button class="btn wide" onclick="closeSheet()">Cancel</button>
   `, () => {
+    $('m-select').onclick = () => {
+      closeSheet();
+      S.selMode = true;
+      toggleSel(it);
+      renderTree(S.treeItems || []);
+    };
     $('m-del').onclick = () => doDelete(it);
     $('m-move').onclick = () => moveSheet(it);
     if ($('m-flatten')) $('m-flatten').onclick = () => doMove(it, parent, true);
@@ -7829,14 +7913,32 @@ async function doBranch(){
 
 
 /* --- 7d. Pull request --------------------------------------- */
-function prSheet(){
+async function prSheet(){
+  // If this repo is a fork, GitHub tells us its parent — that's the upstream
+  // you'd contribute back to. Offer it as the PR target alongside this repo.
+  let parent = null;
+  try {
+    const info = await api.repoInfo(S.repo.owner, S.repo.name);
+    if (info.fork && info.parent) parent = {
+      owner: info.parent.owner.login, name: info.parent.name,
+      branch: info.parent.default_branch
+    };
+  } catch {}
+  S.prParent = parent;
+
   sheet('Pull request', `
-    <div class="overwrite">
-      <b>${S.branch}</b> → <b>${S.repo.default_branch}</b>
-    </div>
+    ${parent ? `
+      <div class="field">
+        <label>Where does this go?</label>
+        <div class="sheetlist" id="pr-target">
+          <button data-t="up" class="on">${esc(parent.owner + '/' + parent.name)}<small>Contribute upstream — ${esc(S.repo.owner)}:${esc(S.branch)} into ${esc(parent.branch)}</small></button>
+          <button data-t="own">${esc(S.repo.owner + '/' + S.repo.name)}<small>Stay in your fork — ${esc(S.branch)} into ${esc(S.repo.default_branch)}</small></button>
+        </div>
+      </div>`
+    : `<div class="overwrite"><b>${S.branch}</b> → <b>${S.repo.default_branch}</b></div>`}
     <div class="field">
       <label for="ptitle">Title</label>
-      <input type="text" id="ptitle" value="${S.branch}">
+      <input type="text" id="ptitle" value="${esc(S.branch)}">
     </div>
     <div class="field">
       <label for="pbody">Description</label>
@@ -7849,6 +7951,14 @@ function prSheet(){
     <div style="height:10px"></div>
     <button class="btn wide" onclick="closeSheet()">Cancel</button>
   `, () => {
+    S.prTarget = parent ? 'up' : 'own';
+    const tgt = $('pr-target');
+    if (tgt) tgt.querySelectorAll('button').forEach(b => b.onclick = () => {
+      tgt.querySelectorAll('button').forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+      S.prTarget = b.dataset.t;
+      $('pprevbox').innerHTML = '';        // the comparison changed
+    });
     $('pgo').onclick = doPR;
     $('pprev').onclick = previewPR;
   });
@@ -7860,10 +7970,15 @@ async function previewPR(){
   const box = $('pprevbox');
   box.innerHTML = '<div class="empty">Comparing…</div>';
   try {
-    const cmp = await api.compare(S.repo.owner, S.repo.name, S.repo.default_branch, S.branch);
+    // When contributing upstream, compare against the parent repo — GitHub
+    // accepts "owner:branch" on the head side for cross-repository compares.
+    const up = S.prTarget === 'up' && S.prParent;
+    const t  = up ? S.prParent : { owner:S.repo.owner, name:S.repo.name, branch:S.repo.default_branch };
+    const head = up ? S.repo.owner + ':' + S.branch : S.branch;
+    const cmp = await api.compare(t.owner, t.name, t.branch, head);
 
     if (!cmp.commits.length) {
-      box.innerHTML = `<div class="overwrite">${S.branch} is not ahead of ${S.repo.default_branch}. There is nothing to open a pull request for.</div>`;
+      box.innerHTML = `<div class="overwrite">${esc(S.branch)} is not ahead of ${esc(t.owner + '/' + t.name)}:${esc(t.branch)}. There is nothing to open a pull request for.</div>`;
       return;
     }
 
@@ -7893,23 +8008,33 @@ async function previewPR(){
 
 async function doPR(){
   const btn = $('pgo');
-  if (S.branch === S.repo.default_branch) {
+  const up = S.prTarget === 'up' && S.prParent;
+
+  // Only a same-repo PR needs a different branch; a fork's branch may well
+  // share the upstream's name, which is fine.
+  if (!up && S.branch === S.repo.default_branch) {
     toast('You are on ' + S.branch + '. Switch to another branch first.');
     return;
   }
 
   busy(btn, true, 'Opening…');
   try {
-    const pr = await api.makePR(S.repo.owner, S.repo.name, {
+    // Cross-fork PRs name the head as "owner:branch" and are created against
+    // the upstream repository, not yours.
+    const target = up ? S.prParent : { owner: S.repo.owner, name: S.repo.name, branch: S.repo.default_branch };
+    const head   = up ? S.repo.owner + ':' + S.branch : S.branch;
+
+    const pr = await api.makePR(target.owner, target.name, {
       title: $('ptitle').value.trim() || S.branch,
       body:  $('pbody').value,
-      head:  S.branch,
-      base:  S.repo.default_branch
+      head, base: target.branch
     });
     closeSheet();
-    toast('Opened #' + pr.number);
+    toast('Opened #' + pr.number + (up ? ' on ' + target.owner + '/' + target.name : ''), 6000);
   } catch (e) {
-    toast(e.message, 6000);
+    toast(e.status === 422
+      ? 'GitHub rejected it: ' + e.message + ' (often there is nothing to compare, or a PR already exists.)'
+      : e.message, 7000);
   } finally {
     busy(btn, false);
   }
