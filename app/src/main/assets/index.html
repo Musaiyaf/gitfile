@@ -3685,10 +3685,20 @@ async function openProjects(){
       openProject(p);
     });
   } catch (e) {
-    v.innerHTML = `<h1 style="padding-left:0">Projects</h1><div class="empty">${esc(
-      /scope|permission|forbidden/i.test(e.message)
-        ? 'Your token needs the Projects permission (Read and write) to see project boards.'
-        : e.message)}</div>`;
+    const scopeIssue = /scope|permission|forbidden|not been granted/i.test(e.message);
+    v.innerHTML = `<h1 style="padding-left:0">Projects</h1><div class="empty">${
+      scopeIssue
+        ? 'Projects boards need a <b>classic</b> token with the <span class="mono">project</span> scope.<br><br>'
+          + 'Fine-grained tokens can\'t reach Projects v2 — GitHub offers no permission for it on personal '
+          + 'accounts, only on organisations. Everything else in gitfile works fine on your fine-grained token.'
+        : esc(e.message)}</div>
+      <div style="height:12px"></div>
+      <button class="btn wide" id="pj-web">Open Projects on GitHub</button>`;
+    const w = $('pj-web');
+    if (w) w.onclick = () => {
+      const u = 'https://github.com/' + S.repo.owner + '/' + S.repo.name + '/projects';
+      window.Native ? window.Native.openUrl(u) : window.open(u, '_blank');
+    };
   }
 }
 
