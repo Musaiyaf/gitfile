@@ -1047,15 +1047,29 @@ pre.log{
 }
 
 /* ══ Desktop view ════════════════════════════════════════════ */
-/* Desktop view, applied in place: the shell is laid out at a desktop width and
-   the page scrolls sideways. Nothing is auto-scaled, so focusing an input can
-   never make the view jump — pinch to zoom in and out yourself. */
+/* Desktop view, applied in place. The content is laid out at a real desktop
+   width and then scaled with CSS `zoom`, which — unlike a transform — also
+   shrinks the scroll area, so panning stays correct. Nothing here touches the
+   viewport, so focusing an input can never make the view jump. */
 body.desktop{ overflow-x:auto; }
-body.desktop #app{ max-width:none; min-width:1100px; }
-body.desktop header{ min-width:1100px; }
-body.desktop #bar{ min-width:1100px; }
-body.desktop main{ padding:24px 32px 96px; }
+body.desktop #app{ max-width:none; }
+body.desktop main{ width:1100px; zoom:var(--dz, 0.55); padding:24px 32px 96px; }
 body.desktop .row{ min-height:36px; padding:6px 16px; }
+
+/* In-app zoom control, shown only in desktop view. */
+#zoombar{
+  position:fixed; right:10px; bottom:calc(76px + env(safe-area-inset-bottom)); z-index:40;
+  display:none; align-items:center; gap:2px;
+  background:var(--overlay); border:1px solid var(--border-lit);
+  border-radius:2em; padding:4px 6px; box-shadow:0 4px 14px rgba(0,0,0,.5);
+}
+body.desktop #zoombar{ display:flex; }
+#zoombar button{
+  background:none; border:0; color:var(--fg-muted); cursor:pointer;
+  font:inherit; font-size:15px; line-height:1; padding:6px 10px; min-width:34px;
+}
+#zoombar button:active{ color:var(--fg); }
+#zoombar .zval{ font-family:var(--mono); font-size:11px; color:var(--fg-subtle); min-width:38px; text-align:center; }
 
 </style>
 </head>
@@ -1267,6 +1281,13 @@ body.desktop .row{ min-height:36px; padding:6px 16px; }
   </main>
 
   <!-- ── Bottom action bar ────────────────────────────────── -->
+  <div id="zoombar">
+    <button id="z-out" aria-label="Zoom out">−</button>
+    <span class="zval" id="z-val">55%</span>
+    <button id="z-in" aria-label="Zoom in">+</button>
+    <button id="z-fit" aria-label="Fit width">fit</button>
+  </div>
+
   <div id="bar"><div id="barwrap"></div></div>
 
   <input type="file" id="assetpick" style="display:none">
@@ -8400,9 +8421,42 @@ function applyDesktop(on){
   // Deliberately does NOT touch the viewport meta. Setting width=1100 makes the
   // WebView rescale the whole page, and it re-scales every time an input takes
   // focus — which is what made editing a file jump about. Instead the desktop
-  // layout is applied in place: the shell is given a desktop width, the page
-  // scrolls sideways, and zooming is left entirely to your fingers.
+  // layout is applied in place and scaled with the zoom control below, which
+  // works regardless of whether the WebView allows pinch gestures.
+  if (on) applyZoom(DESK_ZOOM);
 }
+
+/* ── Desktop zoom ─────────────────────────────────────────────────────────
+   Android WebViews disable pinch-zoom unless the host app turns it on, so the
+   app carries its own control rather than depending on that. CSS `zoom` is
+   used instead of a transform because it also shrinks the scroll area, so
+   panning around a zoomed page still lines up. */
+const ZOOM_KEY = 'gitfile:zoom';
+const ZOOM_STEPS = [0.3, 0.4, 0.5, 0.55, 0.65, 0.75, 0.9, 1, 1.25, 1.5];
+let DESK_ZOOM = 0.55;
+
+function applyZoom(z){
+  DESK_ZOOM = Math.max(0.3, Math.min(1.5, z));
+  document.documentElement.style.setProperty('--dz', String(DESK_ZOOM));
+  const v = $('z-val');
+  if (v) v.textContent = Math.round(DESK_ZOOM * 100) + '%';
+}
+function stepZoom(dir){
+  // Move to the next preset rather than a raw multiply, so the steps feel even.
+  let i = ZOOM_STEPS.findIndex(s => Math.abs(s - DESK_ZOOM) < 0.001);
+  if (i === -1) i = ZOOM_STEPS.reduce((best, s, n) =>
+    Math.abs(s - DESK_ZOOM) < Math.abs(ZOOM_STEPS[best] - DESK_ZOOM) ? n : best, 0);
+  applyZoom(ZOOM_STEPS[Math.max(0, Math.min(ZOOM_STEPS.length - 1, i + dir))]);
+  store.set(ZOOM_KEY, String(DESK_ZOOM)).catch(() => {});
+}
+$('z-in').onclick  = () => stepZoom(1);
+$('z-out').onclick = () => stepZoom(-1);
+$('z-fit').onclick = () => {
+  // Scale so the 1100px layout exactly fits the screen.
+  applyZoom((window.innerWidth - 8) / 1100);
+  store.set(ZOOM_KEY, String(DESK_ZOOM)).catch(() => {});
+  window.scrollTo(0, window.scrollY);
+};
 
 $('gear').onclick = async () => {
   const desktop = (await store.get(DESKTOP_KEY)) === '1';
@@ -8410,7 +8464,7 @@ $('gear').onclick = async () => {
   sheet('Settings', `
     <div class="sheetlist">
       <button id="s-desktop">Desktop view<small>${
-        desktop ? 'On — the full-width layout, pinch to zoom'
+        desktop ? 'On — full-width layout, with the zoom control bottom right'
                 : 'Off — laid out for a phone'
       }</small></button>
       <button id="s-wrap">Word wrap<small>${
@@ -8756,6 +8810,7 @@ async function boot(){
   // Editor appearance preferences.
   try { const f = await store.get(FONT_KEY);  if (f) applyFont(parseInt(f, 10)); } catch {}
   try { const t = await store.get(THEME_KEY); if (t) applyTheme(t); } catch {}
+  try { const z = parseFloat(await store.get(ZOOM_KEY)); if (z) applyZoom(z); } catch {}
   paintRef();
 
   // Hold the splash for a readable minimum so the logo isn't just a flash.
