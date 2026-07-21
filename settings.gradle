@@ -14,6 +14,9 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // usb-serial-for-android (the USB-UART/CDC drivers the ESP flasher needs)
+        // is published on JitPack, not Maven Central.
+        maven { url 'https://jitpack.io' }
     }
 }
 

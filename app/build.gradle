@@ -59,4 +59,9 @@ dependencies {
 
     // FileProvider, so the package installer can read the APK we downloaded.
     implementation 'androidx.core:core:1.13.1'
+
+    // USB serial drivers (CP210x, CH34x, FTDI, Prolific, and CDC-ACM for the
+    // native USB-Serial/JTAG on ESP32-S3/C3/C6/H2/P4). This is what lets the app
+    // talk to an ESP board over an OTG cable and flash it, esptool-style.
+    implementation 'com.github.mik3y:usb-serial-for-android:3.11.0'
 }

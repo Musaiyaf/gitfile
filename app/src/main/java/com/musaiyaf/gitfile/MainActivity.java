@@ -1,13 +1,20 @@
 package com.musaiyaf.gitfile;
 
 import android.annotation.SuppressLint;
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.ContentValues;
 import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.hardware.usb.UsbConstants;
+import android.hardware.usb.UsbDevice;
+import android.hardware.usb.UsbDeviceConnection;
+import android.hardware.usb.UsbManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -27,6 +34,11 @@ import android.app.Activity;
 import androidx.core.content.FileProvider;
 import androidx.documentfile.provider.DocumentFile;
 import androidx.webkit.WebViewAssetLoader;
+
+import com.hoho.android.usbserial.driver.CdcAcmSerialDriver;
+import com.hoho.android.usbserial.driver.UsbSerialDriver;
+import com.hoho.android.usbserial.driver.UsbSerialPort;
+import com.hoho.android.usbserial.driver.UsbSerialProber;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -71,6 +83,14 @@ public class MainActivity extends Activity {
 
 
     private WebView web;
+
+    // ── USB / ESP flashing ────────────────────────────────────────────────────
+    private static final String ACTION_USB_PERMISSION = "com.musaiyaf.gitfile.USB_PERMISSION";
+    private UsbManager usbManager;
+    private BroadcastReceiver usbReceiver;
+    /** The flash currently running, so cancelFlash() can reach it. */
+    private volatile EspLoader currentLoader;
+    private volatile UsbSerialPort currentPort;
 
     /** Held between opening the system file picker and the result coming back. */
     private ValueCallback<Uri[]> pickerCallback;
@@ -158,6 +178,32 @@ public class MainActivity extends Activity {
 
         setContentView(web);
         web.loadUrl(APP_ORIGIN + "/assets/index.html");
+
+        // The system USB-permission dialog answers back through a broadcast. Relay
+        // that yes/no to the page so the flash wizard can proceed or stop.
+        usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
+        usbReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context ctx, Intent intent) {
+                if (!ACTION_USB_PERMISSION.equals(intent.getAction())) return;
+                boolean granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false);
+                if (bridge != null) bridge.js("onUsbPermission", granted ? "true" : "false");
+            }
+        };
+        IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(usbReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(usbReceiver, filter);
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (usbReceiver != null) {
+            try { unregisterReceiver(usbReceiver); } catch (Exception ignore) { }
+        }
+        super.onDestroy();
     }
 
     @Override
@@ -563,6 +609,176 @@ public class MainActivity extends Activity {
             }
         }
 
+        // ══ ESP flashing ══════════════════════════════════════════════════════
+        // The whole flasher is native for the same reason downloads are: a WebView
+        // has no way to reach USB. EspLoader speaks esptool's serial protocol; these
+        // methods are just the bridge — enumerate devices, get permission, pull the
+        // .bin files out of the artifact, and run a flash on a background thread.
+
+        /** USB devices that look like a serial adapter, as JSON for the picker. */
+        @JavascriptInterface
+        public String listSerialDevices() {
+            JSONArray arr = new JSONArray();
+            try {
+                for (UsbDevice dev : usbManager.getDeviceList().values()) {
+                    if (probeDriver(dev) == null) continue;
+                    JSONObject o = new JSONObject();
+                    o.put("id",  dev.getDeviceId());
+                    o.put("vid", dev.getVendorId());
+                    o.put("pid", dev.getProductId());
+                    String name = null;
+                    try { name = dev.getProductName(); } catch (Exception ignore) { }
+                    if (name == null || name.isEmpty())
+                        name = String.format("USB %04X:%04X", dev.getVendorId(), dev.getProductId());
+                    o.put("name", name);
+                    o.put("hasPermission", usbManager.hasPermission(dev));
+                    arr.put(o);
+                }
+            } catch (Exception ignore) { /* return whatever we managed to list */ }
+            return arr.toString();
+        }
+
+        /** Ask Android for permission to talk to a device; answer via onUsbPermission. */
+        @JavascriptInterface
+        public void requestUsbPermission(int deviceId) {
+            UsbDevice dev = findDevice(deviceId);
+            if (dev == null) { js("onUsbPermission", "false"); return; }
+            if (usbManager.hasPermission(dev)) { js("onUsbPermission", "true"); return; }
+            int flags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_MUTABLE : 0;
+            PendingIntent pi = PendingIntent.getBroadcast(MainActivity.this, 0,
+                    new Intent(ACTION_USB_PERMISSION).setPackage(getPackageName()), flags);
+            usbManager.requestPermission(dev, pi);
+        }
+
+        /**
+         * Download the build artifact and dig every .bin out of it (including out of
+         * a nested zip), so the wizard can show them with editable offsets. The bytes
+         * stay in the app's cache; flash() reads them straight from there.
+         */
+        @JavascriptInterface
+        public void prepareFlash(String url, String token, String accept) {
+            new Thread(() -> {
+                try {
+                    File dir = new File(getCacheDir(), "flash");
+                    deleteTree(dir);
+                    dir.mkdirs();
+
+                    HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+                    c.setRequestProperty("Authorization", "Bearer " + token);
+                    c.setRequestProperty("Accept", accept);
+                    c.setInstanceFollowRedirects(true);
+                    c.setConnectTimeout(20000);
+                    c.setReadTimeout(60000);
+                    if (c.getResponseCode() >= 400) {
+                        js("onFlashError", "GitHub refused the download (" + c.getResponseCode()
+                            + "). The token needs Actions: read.");
+                        return;
+                    }
+
+                    long total = c.getContentLengthLong();
+                    File zip = new File(dir, "artifact.zip");
+                    try (InputStream in = c.getInputStream();
+                         FileOutputStream out = new FileOutputStream(zip)) {
+                        byte[] buf = new byte[32768];
+                        long got = 0; int lastPct = -1;
+                        for (int n; (n = in.read(buf)) > 0; ) {
+                            out.write(buf, 0, n);
+                            got += n;
+                            if (total > 0) {
+                                int pct = (int) (got * 100 / total);
+                                if (pct != lastPct) { lastPct = pct; js("onFlashPrepProgress", String.valueOf(pct)); }
+                            }
+                        }
+                    }
+
+                    JSONArray files = new JSONArray();
+                    collectBins(zip, dir, files, 0);
+                    zip.delete();
+
+                    if (files.length() == 0) {
+                        js("onFlashError", "No .bin files were found in this artifact.");
+                        return;
+                    }
+                    js("onFlashFilesReady", files.toString());
+                } catch (Exception e) {
+                    js("onFlashError", "Couldn't prepare the firmware: " + e.getMessage());
+                }
+            }).start();
+        }
+
+        /**
+         * Run the flash. config: {deviceId, chip, baud, stub, compress,
+         * files:[{name, path, offset}]}. Streams onFlashStage / onFlashProgress /
+         * onFlashLog while it runs, then onFlashDone or onFlashError.
+         */
+        @JavascriptInterface
+        public void flash(String configJson) {
+            new Thread(() -> {
+                UsbSerialPort port = null;
+                try {
+                    JSONObject cfg = new JSONObject(configJson);
+                    int deviceId    = cfg.getInt("deviceId");
+                    String chip     = cfg.optString("chip", "auto");
+                    int baud        = cfg.optInt("baud", 115200);
+                    boolean stub    = cfg.optBoolean("stub", true);
+                    boolean compress= cfg.optBoolean("compress", true);
+                    JSONArray fs    = cfg.getJSONArray("files");
+
+                    UsbDevice dev = findDevice(deviceId);
+                    if (dev == null) { js("onFlashError", "USB device not found. Reconnect it and try again."); return; }
+                    if (!usbManager.hasPermission(dev)) { js("onFlashError", "USB permission was not granted."); return; }
+                    UsbSerialDriver drv = probeDriver(dev);
+                    if (drv == null) { js("onFlashError", "No serial driver matches this device."); return; }
+                    UsbDeviceConnection conn = usbManager.openDevice(dev);
+                    if (conn == null) { js("onFlashError", "Couldn't open the USB device."); return; }
+
+                    port = drv.getPorts().get(0);
+                    port.open(conn);
+                    currentPort = port;
+
+                    List<EspLoader.Segment> segs = new ArrayList<>();
+                    for (int i = 0; i < fs.length(); i++) {
+                        JSONObject f = fs.getJSONObject(i);
+                        File file = new File(f.getString("path"));
+                        int offset = (int) Long.parseLong(
+                                f.getString("offset").trim().replaceFirst("(?i)^0x", ""), 16);
+                        segs.add(new EspLoader.Segment(
+                                f.optString("name", file.getName()), offset, readAll(file)));
+                    }
+
+                    EspLoader.Ui ui = new EspLoader.Ui() {
+                        @Override public void stage(String s) { js("onFlashStage", s); }
+                        @Override public void log(String l)   { js("onFlashLog", l); }
+                        @Override public void progress(int idx, String name, long sent, long total, int overall) {
+                            js("onFlashProgress", String.valueOf(idx), name,
+                               String.valueOf(sent), String.valueOf(total), String.valueOf(overall));
+                        }
+                    };
+                    EspLoader loader = new EspLoader(port, dev.getVendorId(), dev.getProductId(),
+                            ui, key -> readStub(key));
+                    currentLoader = loader;
+                    loader.flash(chip, baud, stub, compress, segs);
+                    js("onFlashDone", "Flashed successfully — the board is rebooting.");
+                } catch (Exception e) {
+                    String m = e.getMessage();
+                    js("onFlashError", m == null ? e.toString() : m);
+                } finally {
+                    currentLoader = null;
+                    if (port != null) { try { port.close(); } catch (Exception ignore) { } }
+                    currentPort = null;
+                }
+            }).start();
+        }
+
+        /** Abort a running flash. */
+        @JavascriptInterface
+        public void cancelFlash() {
+            EspLoader l = currentLoader;
+            if (l != null) l.cancel = true;
+            UsbSerialPort p = currentPort;
+            if (p != null) { try { p.close(); } catch (Exception ignore) { } }
+        }
+
         /** Call a global JS function on the UI thread. */
         void js(String fn, String... args) {
             StringBuilder call = new StringBuilder(fn).append("(");
@@ -588,6 +804,93 @@ public class MainActivity extends Activity {
         File[] kids = f.listFiles();
         if (kids != null) for (File k : kids) deleteTree(k);
         f.delete();
+    }
+
+    // ── ESP flashing helpers ──────────────────────────────────────────────────
+
+    private UsbDevice findDevice(int deviceId) {
+        try {
+            for (UsbDevice d : usbManager.getDeviceList().values())
+                if (d.getDeviceId() == deviceId) return d;
+        } catch (Exception ignore) { }
+        return null;
+    }
+
+    /**
+     * Find a serial driver for a device. The library's default table covers the
+     * common USB-UART bridges (CP210x, CH34x, FTDI, Prolific). Boards with a native
+     * USB port (ESP32-S3/C3/C6/…) show up as a plain CDC device the table doesn't
+     * list, so fall back to CDC-ACM for Espressif's VID or anything exposing a CDC
+     * comms interface.
+     */
+    private UsbSerialDriver probeDriver(UsbDevice dev) {
+        UsbSerialDriver drv = UsbSerialProber.getDefaultProber().probeDevice(dev);
+        if (drv != null) return drv;
+        if (dev.getVendorId() == 0x303A || hasCdcInterface(dev)) return new CdcAcmSerialDriver(dev);
+        return null;
+    }
+
+    private static boolean hasCdcInterface(UsbDevice dev) {
+        for (int i = 0; i < dev.getInterfaceCount(); i++) {
+            int cls = dev.getInterface(i).getInterfaceClass();
+            if (cls == UsbConstants.USB_CLASS_COMM || cls == UsbConstants.USB_CLASS_CDC_DATA) return true;
+        }
+        return false;
+    }
+
+    /** Load a bundled stub loader (assets/stubs/<key>.json), or null if absent. */
+    private JSONObject readStub(String key) {
+        try (InputStream in = getAssets().open("stubs/" + key + ".json")) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            for (int n; (n = in.read(buf)) > 0; ) out.write(buf, 0, n);
+            return new JSONObject(out.toString("UTF-8"));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static byte[] readAll(File f) throws Exception {
+        try (InputStream in = new java.io.FileInputStream(f)) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream((int) Math.max(1024, f.length()));
+            byte[] buf = new byte[32768];
+            for (int n; (n = in.read(buf)) > 0; ) out.write(buf, 0, n);
+            return out.toByteArray();
+        }
+    }
+
+    /**
+     * Extract a zip into {@code dir}, recording every .bin as {name, path, size}.
+     * If an entry is itself a zip (some builds nest one), recurse one level so a
+     * zipped set of bins still works. Entry names are flattened so a hostile
+     * "../.." can't escape the cache dir — the same guard download() uses.
+     */
+    private void collectBins(File zip, File dir, JSONArray out, int depth) {
+        if (depth > 2) return;
+        try (ZipInputStream zis = new ZipInputStream(new java.io.FileInputStream(zip))) {
+            for (ZipEntry e; (e = zis.getNextEntry()) != null; ) {
+                String name = new File(e.getName()).getName();
+                if (e.isDirectory() || name.isEmpty()) continue;
+                File unpacked = new File(dir, name);
+                try (FileOutputStream fo = new FileOutputStream(unpacked)) {
+                    byte[] buf = new byte[32768];
+                    for (int n; (n = zis.read(buf)) > 0; ) fo.write(buf, 0, n);
+                }
+                String lower = name.toLowerCase();
+                if (lower.endsWith(".bin")) {
+                    try {
+                        JSONObject o = new JSONObject();
+                        o.put("name", name);
+                        o.put("path", unpacked.getAbsolutePath());
+                        o.put("size", unpacked.length());
+                        out.put(o);
+                    } catch (Exception ignore) { }
+                } else if (lower.endsWith(".zip")) {
+                    collectBins(unpacked, dir, out, depth + 1);
+                    unpacked.delete();
+                }
+            }
+        } catch (Exception ignore) { /* a partial extract still yields usable bins */ }
     }
 
     /**

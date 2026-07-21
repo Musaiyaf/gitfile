@@ -14,6 +14,11 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
+    <!-- Flashing an ESP board needs USB host (OTG). Not required to install: a
+         phone without OTG still runs everything else, it just can't flash. USB
+         access itself is granted at runtime via UsbManager, no permission here. -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"

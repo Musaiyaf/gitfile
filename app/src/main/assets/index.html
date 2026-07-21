@@ -5521,9 +5521,13 @@ async function tickRun(){
         live.forEach((a, i) => {
           const el = $('art-' + i);
           if (!el) return;
-          el.onclick = () => (window.Native && window.Native.download)
-            ? downloadArtifact(a)
-            : (window.open(run.html_url, '_blank'));
+          el.onclick = () => {
+            if (!(window.Native && window.Native.download)) { window.open(run.html_url, '_blank'); return; }
+            // An APK is for installing; anything else might be firmware worth flashing.
+            const isApk = /\.apk$/i.test(a.name) || /apk/i.test(a.name);
+            if (!isApk && flashAvailable()) artifactSheet(a);
+            else downloadArtifact(a);
+          };
         });
 
         // The build just went green while you were watching it. Do not make
@@ -6056,10 +6060,13 @@ function finishSheet(run, artifact){
 
     ${apk ? `<button class="btn solid wide" id="fin-install">Install the APK</button>
              <div style="height:10px"></div>` : ''}
+    ${!apk && flashAvailable() ? `<button class="btn solid wide" id="fin-flash">⚡ Flash to board</button>
+             <div style="height:10px"></div>` : ''}
     <button class="btn wide" id="fin-save">Save to Downloads</button>
     <div style="height:10px"></div>
     <button class="btn wide" id="fin-no">Not now</button>
   `, () => {
+    if ($('fin-flash')) $('fin-flash').onclick = () => { closeSheet(); flashPrepare(artifact); };
     const go = after => {
       closeSheet();
       downloadNative({
@@ -6163,6 +6170,251 @@ function downloadNative(a){
   };
 
   window.Native.download(a.url, S.token, a.accept, a.name, a.unzip);
+}
+
+/* ── Flashing an ESP board ─────────────────────────────────────────────────
+   The build artifact is a zip of .bin files (bootloader, partition table, app).
+   Instead of only saving it, we can push it straight onto a connected ESP over
+   USB — the same job esptool does on a laptop. All the serial work is native
+   (a WebView can't touch USB); this is just the wizard: pick the board, the
+   chip, the baud, and which .bin goes to which offset, then watch it flash.
+   ──────────────────────────────────────────────────────────────────────── */
+let FL = {};
+
+const flashAvailable = () => !!(window.Native && window.Native.prepareFlash);
+
+/* Per-chip bootloader offset — the one default that actually varies by chip.
+   ESP32/S2 keep it at 0x1000; the newer parts moved it to 0x0; a couple to 0x2000. */
+function blOffset(chip){
+  switch (chip) {
+    case 'ESP32': case 'ESP32-S2': return '0x1000';
+    case 'ESP32-C5': case 'ESP32-P4': return '0x2000';
+    default: return '0x0';   // S3/C3/C6/H2/C2/C61/8266, and a sane 'auto' fallback
+  }
+}
+
+/* Guess where a .bin belongs from its name. Everything here is editable after. */
+function guessOffset(name, chip){
+  const n = (name || '').toLowerCase();
+  if (/boot[_-]?app0|ota[_-]?data|otadata/.test(n)) return '0xe000';
+  if (/bootloader/.test(n))                          return blOffset(chip);
+  if (/partition/.test(n))                           return '0x8000';
+  if (/merged|combined|factory|flash[_-]?all/.test(n)) return '0x0';
+  return '0x10000';   // the app image, by convention
+}
+
+/* Step 1 — download the artifact and let native pull the .bin files out of it. */
+function flashPrepare(a){
+  if (!flashAvailable()) { toast('Flashing needs the newest gitfile — update the app first.', 6000); return; }
+  FL = { artifact: a };
+
+  sheet('Preparing firmware', `
+    <div class="overwrite"><b>${esc(a.name)}</b><br>${bytes(a.size_in_bytes)}</div>
+    <div class="bar"><i id="fp-bar"></i></div>
+    <div class="barstat"><span class="now" id="fp-now">Downloading…</span><span id="fp-pct">0%</span></div>
+    <div style="height:16px"></div>
+    <button class="btn wide" id="fp-cancel">Cancel</button>
+  `, () => { $('fp-cancel').onclick = closeSheet; });
+
+  window.onFlashPrepProgress = pct => {
+    const p = Number(pct);
+    if ($('fp-bar')) { $('fp-bar').style.width = p + '%'; $('fp-pct').textContent = p + '%'; }
+  };
+  window.onFlashFilesReady = json => {
+    let files = [];
+    try { files = JSON.parse(json); } catch { }
+    flashWizard(files);
+  };
+  window.onFlashError = flashSimpleError;
+
+  window.Native.prepareFlash(a.archive_download_url, S.token, 'application/vnd.github+json');
+}
+
+function flashSimpleError(msg){
+  sheet('Couldn’t prepare firmware', `
+    <div class="overwrite" style="color:var(--red)">${esc(msg)}</div>
+    <div style="height:16px"></div>
+    <button class="btn wide" id="fe-x">Close</button>
+  `, () => { $('fe-x').onclick = closeSheet; });
+}
+
+/* Step 2 — the configuration wizard: board, chip, baud, options, file→offset. */
+function flashWizard(files){
+  FL.files = files;
+  const chips = ['auto','ESP32','ESP32-S2','ESP32-S3','ESP32-C2','ESP32-C3',
+                 'ESP32-C5','ESP32-C6','ESP32-C61','ESP32-H2','ESP32-P4','ESP8266'];
+  const bauds = [115200, 230400, 460800, 921600];
+
+  let devs = [];
+  try { devs = JSON.parse(window.Native.listSerialDevices()); } catch { }
+  FL.devs = devs;
+
+  const chip0 = 'auto';
+  const deviceHtml = devs.length ? `
+    <div class="field">
+      <label class="lbl" for="fl-dev">Board</label>
+      <select id="fl-dev">
+        ${devs.map(d => `<option value="${d.id}">${esc(d.name)}${d.hasPermission ? '' : ' (needs permission)'}</option>`).join('')}
+      </select>
+    </div>` : `
+    <div class="overwrite" style="margin-bottom:16px">
+      No board detected. Connect your ESP board with a USB-OTG cable, then tap Refresh.
+    </div>`;
+
+  const fileRows = files.map((f, i) => `
+    <div style="display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--border)">
+      <label class="check" style="flex:none">
+        <input type="checkbox" id="fl-inc-${i}" checked><span class="box"></span>
+      </label>
+      <div style="flex:1; min-width:0">
+        <div style="font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${esc(f.name)}</div>
+        <div style="font-size:11px; color:var(--fg-muted)">${bytes(f.size)}</div>
+      </div>
+      <input type="text" id="fl-off-${i}" value="${guessOffset(f.name, chip0)}"
+             inputmode="text" spellcheck="false"
+             style="width:96px; flex:none; font-family:var(--mono); text-align:right">
+    </div>`).join('');
+
+  sheet('Flash to board', `
+    ${deviceHtml}
+    <div class="field">
+      <label class="lbl" for="fl-chip">Chip type</label>
+      <select id="fl-chip">${chips.map(c => `<option value="${c}">${c === 'auto' ? 'Auto-detect' : c}</option>`).join('')}</select>
+    </div>
+    <div class="field">
+      <label class="lbl" for="fl-baud">Baud rate</label>
+      <select id="fl-baud">${bauds.map(b => `<option value="${b}"${b === 115200 ? ' selected' : ''}>${b}</option>`).join('')}</select>
+    </div>
+    <label class="check" style="margin-bottom:10px">
+      <input type="checkbox" id="fl-stub" checked><span class="box"></span>
+      <span>High-speed mode <span style="color:var(--fg-muted); font-weight:400">(stub loader)</span></span>
+    </label>
+    <label class="check" style="margin-bottom:16px">
+      <input type="checkbox" id="fl-comp" checked><span class="box"></span>
+      <span>Compress <span style="color:var(--fg-muted); font-weight:400">(faster transfer)</span></span>
+    </label>
+
+    <div class="lbl" style="margin-bottom:4px">Files &amp; offsets</div>
+    <div class="hint" style="margin:0 0 8px">Tick what to write, and where. Offsets are hex.</div>
+    ${fileRows || '<div class="overwrite">No .bin files were found.</div>'}
+
+    <div style="height:16px"></div>
+    <button class="btn solid wide" id="fl-go"${devs.length ? '' : ' disabled'}>Flash</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" id="fl-refresh">Refresh boards</button>
+  `, () => {
+    $('fl-refresh').onclick = () => flashWizard(FL.files);
+    if ($('fl-go')) $('fl-go').onclick = flashDoFlash;
+    // Re-guessing offsets when the chip changes only affects the bootloader row,
+    // but recompute all so a fresh pick lines everything up; edit afterwards.
+    $('fl-chip').onchange = () => {
+      const chip = $('fl-chip').value;
+      files.forEach((f, i) => { if ($('fl-off-' + i)) $('fl-off-' + i).value = guessOffset(f.name, chip); });
+    };
+  });
+}
+
+/* Step 3a — gather the config, get USB permission if needed, then flash. */
+function flashDoFlash(){
+  const dev = FL.devs.find(d => String(d.id) === $('fl-dev').value);
+  if (!dev) { toast('Pick a board first.'); return; }
+
+  const files = [];
+  FL.files.forEach((f, i) => {
+    if (!$('fl-inc-' + i).checked) return;
+    const off = ($('fl-off-' + i).value || '').trim() || '0x0';
+    files.push({ name: f.name, path: f.path, offset: off });
+  });
+  if (!files.length) { toast('Tick at least one file to flash.'); return; }
+
+  FL.cfg = {
+    deviceId: dev.id,
+    chip:     $('fl-chip').value,
+    baud:     Number($('fl-baud').value),
+    stub:     $('fl-stub').checked,
+    compress: $('fl-comp').checked,
+    files
+  };
+
+  window.onUsbPermission = granted => {
+    if (!granted) { toast('USB permission was denied.', 5000); return; }
+    flashRun();
+  };
+  if (dev.hasPermission) flashRun();
+  else window.Native.requestUsbPermission(dev.id);
+}
+
+function flashRun(){
+  flashProgressSheet();
+  window.Native.flash(JSON.stringify(FL.cfg));
+}
+
+/* Step 3b — live progress: overall bar, current file, and a scrolling log. */
+function flashProgressSheet(){
+  sheet('Flashing', `
+    <div id="fl-stage" class="overwrite">Starting…</div>
+    <div class="bar"><i id="fl-obar"></i></div>
+    <div class="barstat"><span class="now" id="fl-fname">—</span><span id="fl-opct">0%</span></div>
+    <pre id="fl-log" style="max-height:170px; overflow:auto; margin:14px 0 0;
+         background:var(--inset); border-radius:var(--r); padding:8px 10px;
+         font-family:var(--mono); font-size:11px; line-height:1.5; white-space:pre-wrap;
+         color:var(--fg-muted)"></pre>
+    <div style="height:12px"></div>
+    <button class="btn wide danger" id="fl-cancel">Cancel</button>
+  `, () => {
+    $('fl-cancel').onclick = () => { if (window.Native.cancelFlash) window.Native.cancelFlash(); flog('Cancelling…'); };
+  });
+
+  const finishBtn = () => {
+    const b = $('fl-cancel');
+    if (!b) return;
+    b.textContent = 'Close';
+    b.classList.remove('danger');
+    b.onclick = closeSheet;
+  };
+
+  window.onFlashStage = s => { if ($('fl-stage')) $('fl-stage').textContent = s; flog(s); };
+  window.onFlashLog   = l => flog(l);
+  window.onFlashProgress = (idx, name, sent, total, overall) => {
+    if (!$('fl-obar')) return;
+    const p = Number(overall);
+    $('fl-obar').style.width = p + '%';
+    $('fl-opct').textContent = p + '%';
+    $('fl-fname').textContent = name;
+  };
+  window.onFlashDone = msg => {
+    if ($('fl-obar')) { $('fl-obar').style.width = '100%'; $('fl-opct').textContent = '100%'; }
+    if ($('fl-stage')) { $('fl-stage').textContent = '✓ ' + (msg || 'Done'); $('fl-stage').style.color = 'var(--green-fg)'; }
+    flog(msg || 'Done');
+    finishBtn();
+  };
+  window.onFlashError = msg => {
+    if ($('fl-stage')) { $('fl-stage').textContent = 'Failed'; $('fl-stage').style.color = 'var(--red)'; }
+    if ($('fl-obar')) $('fl-obar').style.background = 'var(--del-bg)';
+    flog('Error: ' + msg);
+    finishBtn();
+  };
+}
+
+function flog(line){
+  const el = $('fl-log');
+  if (!el) return;
+  el.textContent += (el.textContent ? '\n' : '') + line;
+  el.scrollTop = el.scrollHeight;
+}
+
+/* Tapping an artifact that isn't an APK: flash it, or just download it. */
+function artifactSheet(a){
+  sheet('Artifact', `
+    <div class="overwrite"><b>${esc(a.name)}</b><br>${bytes(a.size_in_bytes)}</div>
+    <p class="hint" style="margin:0 0 16px">Flash it straight to a connected ESP board, or download it.</p>
+    <button class="btn solid wide" id="as-flash">⚡ Flash to board</button>
+    <div style="height:10px"></div>
+    <button class="btn wide" id="as-dl">Download</button>
+  `, () => {
+    $('as-flash').onclick = () => { closeSheet(); flashPrepare(a); };
+    $('as-dl').onclick    = () => { closeSheet(); downloadArtifact(a); };
+  });
 }
 
 /* ── Job logs ─────────────────────────────────────────────────────────────
