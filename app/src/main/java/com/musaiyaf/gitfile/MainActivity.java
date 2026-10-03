@@ -267,9 +267,16 @@ public class MainActivity extends Activity {
          * Not a constant in the JavaScript: that would be a number someone has to
          * remember to bump, and therefore a number that is eventually a lie. The
          * build number comes from the Actions run that produced this APK.
+         *
+         * Named `version`, NOT `appVersion`: the page calls window.Native.version().
+         * JavascriptInterface methods are matched by name at runtime, and nothing
+         * checks the contract at build time — so when this was called appVersion()
+         * the page's truthiness guard simply fell through and the About panel
+         * displayed the literal string "web" instead of the real version. Renaming
+         * this method silently breaks that display again. Keep them in sync.
          */
         @JavascriptInterface
-        public String appVersion() {
+        public String version() {
             try {
                 android.content.pm.PackageInfo p =
                         getPackageManager().getPackageInfo(getPackageName(), 0);
