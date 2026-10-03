@@ -1,0 +1,30 @@
+# Gradle build output and caches.
+# Without this, `git add -A` would commit ~2 MB of compiled artifacts.
+.gradle/
+build/
+app/build/
+
+# Local SDK path — machine specific, never shared.
+local.properties
+
+# Signing material. app/build.gradle reads app/release.keystore when present
+# and falls back to a debug signature otherwise, so it must never be committed.
+*.keystore
+*.jks
+*.p12
+
+# Packaged app artifacts — these belong in releases, not in git history.
+*.apk
+*.aab
+*.ap_
+*.dex
+out/
+
+# IDE and OS cruft.
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+captures/
+.externalNativeBuild/
+.cxx/
